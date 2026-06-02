@@ -1,4 +1,5 @@
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,9 +20,28 @@ app = FastAPI(
     version="0.1.0",
 )
 
+
+def _cors_allowed_origins() -> list[str]:
+    """
+    허용 Origin 목록을 반환한다.
+    CORS_ALLOWED_ORIGINS(쉼표 구분)가 있으면 우선 사용하고, 없으면 기본값을 쓴다.
+    """
+    raw = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
+    if raw:
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return [
+        "https://zd-article-migrator.onrender.com",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+
+
+_cors_origins = _cors_allowed_origins()
+logging.getLogger(__name__).info("CORS allow_origins: %s", _cors_origins)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://zd-article-migrator.onrender.com"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

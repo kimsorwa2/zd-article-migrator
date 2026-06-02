@@ -7,3 +7,5 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://zd-article-migrator.onrender.com
