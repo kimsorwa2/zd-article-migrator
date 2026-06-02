@@ -1,5 +1,6 @@
 import { Loader2 } from "lucide-react";
 import type { MigrateProgress } from "../api/client";
+import MigrateProgressLogAccordion from "./MigrateProgressLogAccordion";
 
 interface MigrateProgressPanelProps {
   /** 마이그레이션 진행 상태 */
@@ -16,8 +17,18 @@ export default function MigrateProgressPanel({ progress }: MigrateProgressPanelP
   return (
     <div className="sync-progress-panel migrate-progress-panel" role="status" aria-live="polite" aria-busy={progress.status === "running"}>
       <div className="sync-progress-header">
-        <Loader2 className="loading-panel-spinner" size={22} aria-hidden="true" />
-        <p className="sync-progress-message">{progress.message || "마이그레이션 진행 중..."}</p>
+        {progress.status === "running" ? (
+          <Loader2 className="loading-panel-spinner" size={22} aria-hidden="true" />
+        ) : null}
+        <p
+          className={
+            progress.status === "failed"
+              ? "sync-progress-message migrate-progress-message-failed"
+              : "sync-progress-message"
+          }
+        >
+          {progress.message || "마이그레이션 진행 중..."}
+        </p>
       </div>
       <div className="sync-progress-track" aria-hidden="true">
         <div className="sync-progress-bar" style={{ width: `${percent}%` }} />
@@ -32,6 +43,7 @@ export default function MigrateProgressPanel({ progress }: MigrateProgressPanelP
         ) : null}
         {progress.phase ? <> · {progress.phase}</> : null}
       </p>
+      <MigrateProgressLogAccordion logs={progress.logs ?? []} />
     </div>
   );
 }

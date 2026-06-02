@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Rocket } from "lucide-react";
+import { ArrowLeftRight } from "lucide-react";
 import {
   apiClient,
   type DeleteExecuteResponse,
@@ -7,6 +7,7 @@ import {
   type FetchDetailBrand,
   type FetchSyncProgress,
   type Instance,
+  type SourceBrand,
   type MigrateOverlayResponse,
   type MigrateProgress,
 } from "../api/client";
@@ -78,6 +79,20 @@ function toggleSet(values: number[], id: number, checked: boolean): number[] {
 /**
  * 타겟 Help Center 브랜드 로컬 ID를 결정한다(훅 밖 유틸).
  */
+/**
+ * 인스턴스 상세의 브랜드 정보를 타겟 선택 UI용 FetchDetailBrand 형태로 변환한다.
+ */
+function instanceBrandToFetchDetailBrand(brand: SourceBrand): FetchDetailBrand {
+  return {
+    id: brand.id,
+    a_brand_id: brand.a_brand_id,
+    name: brand.name,
+    subdomain: brand.subdomain,
+    has_help_center: brand.has_help_center,
+    categories: [],
+  };
+}
+
 function resolveTargetBrandIdFromState(
   targetHelpCenterBrands: FetchDetailBrand[],
   targetBrandId: number,
@@ -104,7 +119,8 @@ export default function MigratePage({ instances }: MigratePageProps) {
   const [selectedSectionIds, setSelectedSectionIds] = useState<number[]>([]);
   const [selectedArticleIds, setSelectedArticleIds] = useState<number[]>([]);
   const [sourceBrands, setSourceBrands] = useState<FetchDetailBrand[]>([]);
-  const [targetBrands, setTargetBrands] = useState<FetchDetailBrand[]>([]);
+  const [targetBrandOptions, setTargetBrandOptions] = useState<FetchDetailBrand[]>([]);
+  const [migratedTargetBrands, setMigratedTargetBrands] = useState<FetchDetailBrand[]>([]);
   const [migrateOverlay, setMigrateOverlay] = useState<MigrateOverlayResponse | null>(null);
   const [selectedTargetCategoryAIds, setSelectedTargetCategoryAIds] = useState<number[]>([]);
   const [selectedTargetSectionAIds, setSelectedTargetSectionAIds] = useState<number[]>([]);
@@ -115,13 +131,19 @@ export default function MigratePage({ instances }: MigratePageProps) {
   const [autoResyncTarget, setAutoResyncTarget] = useState(false);
   const [targetSyncProgress, setTargetSyncProgress] = useState<FetchSyncProgress | null>(null);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
-  const [isTargetLoading, setIsTargetLoading] = useState(false);
+  const [isTargetBrandLoading, setIsTargetBrandLoading] = useState(false);
+  const [isMigratedTreeLoading, setIsMigratedTreeLoading] = useState(false);
+  const [mappingRecordCount, setMappingRecordCount] = useState(0);
+  const [isClearingMappings, setIsClearingMappings] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoResyncTargetRef = useRef(autoResyncTarget);
 
   const migrateEligibleInstances = useMemo(() => instances.filter(isMigrateEligibleInstance), [instances]);
 
-  const targetHelpCenterBrands = useMemo(() => targetBrands.filter(isTargetHelpCenterBrand), [targetBrands]);
+  const targetHelpCenterBrands = useMemo(
+    () => targetBrandOptions.filter(isTargetHelpCenterBrand),
+    [targetBrandOptions],
+  );
 
   const childMap = useMemo(() => buildFetchTreeChildMaps(sourceBrands), [sourceBrands]);
 
@@ -131,10 +153,60 @@ export default function MigratePage({ instances }: MigratePageProps) {
       if (targetHelpCenterBrands.length > 1) {
         return [];
       }
-      return targetBrands;
+      return migratedTargetBrands;
     }
-    return targetBrands.filter((brand) => brand.id === resolved);
-  }, [targetBrands, targetHelpCenterBrands, targetBrandId]);
+    return migratedTargetBrands.filter((brand) => brand.id === resolved);
+  }, [migratedTargetBrands, targetHelpCenterBrands, targetBrandId]);
+
+  /** 트리에 실제로 표시된 노드만 오버레이(초록색) 대상으로 제한한다. */
+  const overlayForMigratedTree = useMemo(() => {
+    if (!migrateOverlay) {
+      return null;
+    }
+    const categoryAIds = new Set<number>();
+    const sectionAIds = new Set<number>();
+    const articleAIds = new Set<number>();
+    for (const brand of displayTargetBrands) {
+      for (const category of brand.categories) {
+        categoryAIds.add(category.a_id);
+        for (const section of category.sections) {
+          sectionAIds.add(section.a_id);
+          for (const article of section.articles) {
+            articleAIds.add(article.a_id);
+          }
+        }
+      }
+    }
+    return {
+      ...migrateOverlay,
+      migrated_target_category_a_ids: migrateOverlay.migrated_target_category_a_ids.filter((id) =>
+        categoryAIds.has(id),
+      ),
+      migrated_target_section_a_ids: migrateOverlay.migrated_target_section_a_ids.filter((id) => sectionAIds.has(id)),
+      migrated_target_article_a_ids: migrateOverlay.migrated_target_article_a_ids.filter((id) => articleAIds.has(id)),
+      delete_error_target_category_a_ids: migrateOverlay.delete_error_target_category_a_ids.filter((id) =>
+        categoryAIds.has(id),
+      ),
+      delete_error_target_section_a_ids: migrateOverlay.delete_error_target_section_a_ids.filter((id) =>
+        sectionAIds.has(id),
+      ),
+      delete_error_target_article_a_ids: migrateOverlay.delete_error_target_article_a_ids.filter((id) =>
+        articleAIds.has(id),
+      ),
+      delete_error_items: migrateOverlay.delete_error_items.filter((item) => {
+        if (item.mapping_entity_type === "category") {
+          return categoryAIds.has(item.target_a_id);
+        }
+        if (item.mapping_entity_type === "section") {
+          return sectionAIds.has(item.target_a_id);
+        }
+        if (item.mapping_entity_type === "article") {
+          return articleAIds.has(item.target_a_id);
+        }
+        return false;
+      }),
+    };
+  }, [migrateOverlay, displayTargetBrands]);
 
   const isMigrateRunning = migrateProgress?.status === "running";
   const isTargetResyncing = targetSyncProgress?.status === "running";
@@ -174,34 +246,81 @@ export default function MigratePage({ instances }: MigratePageProps) {
   }, [sourceInstanceId]);
 
   useEffect(() => {
-    async function loadTargetTree() {
+    async function loadTargetBrandOptions() {
       if (!targetInstanceId) {
-        setTargetBrands([]);
+        setTargetBrandOptions([]);
         return;
       }
 
-      setIsTargetLoading(true);
+      setIsTargetBrandLoading(true);
       try {
-        const response = await apiClient.getFetchDetail(targetInstanceId);
-        setTargetBrands(response.brands);
+        const detail = await apiClient.getInstance(targetInstanceId);
+        setTargetBrandOptions(detail.brands.map(instanceBrandToFetchDetailBrand));
       } catch (error) {
-        setTargetBrands([]);
-        setMessage(error instanceof Error ? error.message : "타겟 Help Center 구조 조회 실패", { variant: "error" });
+        setTargetBrandOptions([]);
+        setMessage(error instanceof Error ? error.message : "타겟 브랜드 목록 조회 실패", { variant: "error" });
       } finally {
-        setIsTargetLoading(false);
+        setIsTargetBrandLoading(false);
       }
     }
 
-    void loadTargetTree();
+    void loadTargetBrandOptions();
   }, [targetInstanceId, setMessage]);
 
-  const reloadTargetTree = useCallback(async () => {
-    if (!targetInstanceId) {
+  const reloadMigratedTargetTree = useCallback(async () => {
+    if (!sourceInstanceId || !targetInstanceId) {
+      setMigratedTargetBrands([]);
+      setMappingRecordCount(0);
       return;
     }
-    const targetDetail = await apiClient.getFetchDetail(targetInstanceId);
-    setTargetBrands(targetDetail.brands);
-  }, [targetInstanceId]);
+
+    const resolvedBrandId = resolveTargetBrandIdFromState(targetHelpCenterBrands, targetBrandId);
+    if (resolvedBrandId === null) {
+      setMigratedTargetBrands([]);
+      setMappingRecordCount(0);
+      return;
+    }
+
+    setIsMigratedTreeLoading(true);
+    try {
+      const response = await apiClient.getMigrateTargetTree(
+        sourceInstanceId,
+        targetInstanceId,
+        resolvedBrandId,
+      );
+      setMigratedTargetBrands(response.brands);
+      setMappingRecordCount(response.mapping_record_count ?? 0);
+    } catch (error) {
+      setMigratedTargetBrands([]);
+      setMappingRecordCount(0);
+      setMessage(error instanceof Error ? error.message : "마이그레이션 생성 항목 조회 실패", { variant: "error" });
+    } finally {
+      setIsMigratedTreeLoading(false);
+    }
+  }, [sourceInstanceId, targetInstanceId, targetBrandId, targetHelpCenterBrands, setMessage]);
+
+  async function handleClearMigrationMappings() {
+    if (!sourceInstanceId || !targetInstanceId) {
+      return;
+    }
+    if (!window.confirm("이 소스·타겟 쌍의 마이그레이션 매핑 기록을 모두 삭제할까요?\n(타겟 Help Center 수집 데이터는 유지됩니다.)")) {
+      return;
+    }
+
+    setIsClearingMappings(true);
+    try {
+      const response = await apiClient.clearMigrateMappings(sourceInstanceId, targetInstanceId);
+      setMessage(`마이그레이션 매핑 ${response.deleted_count}건을 삭제했습니다.`);
+      setSelectedTargetCategoryAIds([]);
+      setSelectedTargetSectionAIds([]);
+      await reloadOverlay();
+      await reloadMigratedTargetTree();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "마이그레이션 기록 삭제 실패", { variant: "error" });
+    } finally {
+      setIsClearingMappings(false);
+    }
+  }
 
   const reloadOverlay = useCallback(async () => {
     if (!sourceInstanceId || !targetInstanceId) {
@@ -236,28 +355,40 @@ export default function MigratePage({ instances }: MigratePageProps) {
         attachments_total: 0,
         error: null,
         result: null,
+        warnings: [],
       });
       try {
         await apiClient.syncInstance(targetInstanceId);
         const finalProgress = await waitForSyncCompletion(targetInstanceId, setTargetSyncProgress);
+        setTargetSyncProgress(finalProgress);
         const processedBrands = finalProgress.result?.processed_brands ?? 0;
-        await reloadTargetTree();
+        const warningCount = finalProgress.warnings?.length ?? 0;
+        await reloadMigratedTargetTree();
         await reloadOverlay();
-        setMessage(`${previousMessage} · 타겟 재수집 완료 (브랜드 ${processedBrands}개)`);
+        setMessage(
+          warningCount > 0
+            ? `${previousMessage} · 타겟 재수집 완료 (브랜드 ${processedBrands}개, 경고 ${warningCount}건)`
+            : `${previousMessage} · 타겟 재수집 완료 (브랜드 ${processedBrands}개)`,
+        );
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "타겟 재수집 실패", { variant: "error" });
-      } finally {
-        setTargetSyncProgress(null);
+        try {
+          const failedProgress = await apiClient.getSyncProgress(targetInstanceId);
+          setTargetSyncProgress(failedProgress);
+        } catch {
+          // ignore
+        }
       }
     },
-    [targetInstanceId, reloadTargetTree, reloadOverlay, setMessage],
+    [targetInstanceId, reloadMigratedTargetTree, reloadOverlay, setMessage],
   );
 
   useEffect(() => {
     setSelectedTargetCategoryAIds([]);
     setSelectedTargetSectionAIds([]);
     void reloadOverlay();
-  }, [reloadOverlay]);
+    void reloadMigratedTargetTree();
+  }, [reloadOverlay, reloadMigratedTargetTree]);
 
   useEffect(() => {
     if (!targetInstanceId) {
@@ -299,18 +430,24 @@ export default function MigratePage({ instances }: MigratePageProps) {
           if (progress.status === "completed") {
             stopMigratePolling();
             const summary = progress.result?.summary;
-            const completionMessage = summary
-              ? `마이그레이션 완료 - 브랜드 ${summary.brands}, 카테고리 ${summary.categories}, 섹션 ${summary.sections}, 아티클 ${summary.articles}`
-              : "마이그레이션이 완료되었습니다.";
-            setMessage(completionMessage);
+            const createdTotal =
+              (summary?.categories ?? 0) + (summary?.sections ?? 0) + (summary?.articles ?? 0);
+            const completionMessage =
+              progress.message ||
+              (summary
+                ? createdTotal > 0
+                  ? `마이그레이션 완료 — 카테고리 ${summary.categories}개, 섹션 ${summary.sections}개, 아티클 ${summary.articles}개 생성·갱신`
+                  : `마이그레이션 종료 — 생성·갱신된 항목 없음 (대상: 카테고리 ${summary.scope_categories ?? 0}, 섹션 ${summary.scope_sections ?? 0}, 아티클 ${summary.scope_articles ?? 0})`
+                : "마이그레이션이 완료되었습니다.");
+            setMessage(completionMessage, { variant: createdTotal > 0 ? "info" : "error" });
             await reloadOverlay();
+            await reloadMigratedTargetTree();
             if (autoResyncTargetRef.current) {
               await runTargetResync(completionMessage);
             }
           }
           if (progress.status === "failed") {
             stopMigratePolling();
-            setMessage(progress.error ?? "마이그레이션 실패", { variant: "error" });
           }
         } catch (error) {
           stopMigratePolling();
@@ -318,7 +455,15 @@ export default function MigratePage({ instances }: MigratePageProps) {
         }
       })();
     }, 1500);
-  }, [sourceInstanceId, targetInstanceId, reloadOverlay, runTargetResync, setMessage, stopMigratePolling]);
+  }, [
+    sourceInstanceId,
+    targetInstanceId,
+    reloadOverlay,
+    reloadMigratedTargetTree,
+    runTargetResync,
+    setMessage,
+    stopMigratePolling,
+  ]);
 
   useEffect(() => {
     if (!sourceInstanceId || !targetInstanceId) {
@@ -384,6 +529,20 @@ export default function MigratePage({ instances }: MigratePageProps) {
       return;
     }
 
+    const hasLeafSelection =
+      selectedCategoryIds.length > 0 || selectedSectionIds.length > 0 || selectedArticleIds.length > 0;
+    const brandChildCategoryCount = selectedBrandIds.reduce(
+      (sum, brandId) => sum + (childMap.brandToCategories.get(brandId)?.length ?? 0),
+      0,
+    );
+    if (!hasLeafSelection && brandChildCategoryCount === 0) {
+      setMessage(
+        "이관할 카테고리·섹션·아티클이 없습니다. 소스 트리에서 하위 항목을 선택하거나, 인스턴스 메뉴에서 Help Center 수집을 다시 실행하세요.",
+        { variant: "error" },
+      );
+      return;
+    }
+
     setIsMigrateStarting(true);
     setMessage("");
     try {
@@ -408,6 +567,7 @@ export default function MigratePage({ instances }: MigratePageProps) {
         total_steps: 1,
         error: null,
         result: null,
+        logs: ["마이그레이션을 시작합니다."],
       });
       startMigratePolling();
     } catch (error) {
@@ -448,7 +608,7 @@ export default function MigratePage({ instances }: MigratePageProps) {
       setSelectedTargetCategoryAIds([]);
       setSelectedTargetSectionAIds([]);
       await reloadOverlay();
-      await reloadTargetTree();
+      await reloadMigratedTargetTree();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "삭제 처리 실패", { variant: "error" });
     } finally {
@@ -479,7 +639,7 @@ export default function MigratePage({ instances }: MigratePageProps) {
       });
       setMessage(formatDeleteResultMessage(response));
       await reloadOverlay();
-      await reloadTargetTree();
+      await reloadMigratedTargetTree();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "삭제 재시도 실패", { variant: "error" });
     } finally {
@@ -505,14 +665,20 @@ export default function MigratePage({ instances }: MigratePageProps) {
 
   return (
     <section className="page">
-      <h2 className="title-with-icon">
-        <Rocket size={20} aria-hidden="true" />
-        마이그레이션
-      </h2>
+      <header className="page-top">
+        <h2 className="page-title">
+          <ArrowLeftRight size={22} aria-hidden="true" />
+          인스턴스 간 이관
+        </h2>
+        <p className="page-lead">소스·타겟 Zendesk 인스턴스를 선택해 Help Center 아티클을 이관합니다.</p>
+      </header>
 
       {message ? <NoticeBanner message={message} variant={noticeVariant} onDismiss={clearMessage} /> : null}
 
-      {migrateProgress && (migrateProgress.status === "running" || migrateProgress.status === "failed") ? (
+      {migrateProgress &&
+      (migrateProgress.status === "running" ||
+        migrateProgress.status === "failed" ||
+        migrateProgress.status === "completed") ? (
         <MigrateProgressPanel progress={migrateProgress} />
       ) : null}
 
@@ -654,7 +820,7 @@ export default function MigratePage({ instances }: MigratePageProps) {
             </select>
           </label>
 
-          {targetInstanceId && !isTargetLoading && targetHelpCenterBrands.length > 1 ? (
+          {targetInstanceId && !isTargetBrandLoading && targetHelpCenterBrands.length > 1 ? (
             <label className="migrate-panel-field">
               마이그레이션 대상 브랜드
               <select
@@ -674,7 +840,7 @@ export default function MigratePage({ instances }: MigratePageProps) {
             </label>
           ) : null}
 
-          {targetInstanceId && !isTargetLoading && sourceInstanceId ? (
+          {targetInstanceId && !isTargetBrandLoading && sourceInstanceId ? (
             <div className="migrate-target-run-block">
               <label className="migrate-auto-resync-label">
                 <input
@@ -709,12 +875,43 @@ export default function MigratePage({ instances }: MigratePageProps) {
 
           {targetInstanceId ? (
             <>
-              {isTargetLoading ? <LoadingPanel message="타겟 Help Center 구조를 불러오는 중..." /> : null}
-              {!isTargetLoading && displayTargetBrands.length > 0 ? (
+              {isTargetBrandLoading ? <LoadingPanel message="타겟 브랜드 정보를 불러오는 중..." /> : null}
+              {!sourceInstanceId ? (
+                <p className="muted migrate-panel-placeholder">
+                  소스 인스턴스를 선택하면 마이그레이션으로 생성된 타겟 항목을 표시합니다.
+                </p>
+              ) : null}
+              {sourceInstanceId ? (
+                <p className="muted migrate-target-tree-explainer">
+                  이 영역은 <strong>인스턴스 관리의 전체 Help Center 구조가 아닙니다.</strong> 선택한 소스→타겟
+                  쌍의 <code>migration_mappings</code> DB 기록만 표시합니다. 마이그레이션을 실행하기 전에 항목이 보이면
+                  이전 시도에서 남은 매핑입니다.
+                </p>
+              ) : null}
+              {sourceInstanceId && mappingRecordCount > 0 ? (
+                <div className="migrate-stale-mapping-banner">
+                  <p>
+                    DB에 마이그레이션 매핑 <strong>{mappingRecordCount}건</strong>이 남아 있어 아래 트리에 표시됩니다.
+                    새로 시작하려면 기록을 초기화하세요.
+                  </p>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    disabled={isClearingMappings || isMigrateRunning || isDeleting}
+                    onClick={() => void handleClearMigrationMappings()}
+                  >
+                    {isClearingMappings ? "삭제 중..." : "마이그레이션 매핑 기록 초기화"}
+                  </button>
+                </div>
+              ) : null}
+              {sourceInstanceId && isMigratedTreeLoading ? (
+                <LoadingPanel message="마이그레이션 생성 항목을 불러오는 중..." />
+              ) : null}
+              {sourceInstanceId && !isMigratedTreeLoading && displayTargetBrands.length > 0 ? (
                 <TargetMigratedTree
                   title="타겟 Help Center 구조 (마이그레이션 생성 항목)"
                   brands={displayTargetBrands}
-                  overlay={migrateOverlay}
+                  overlay={overlayForMigratedTree}
                   selectedCategoryAIds={selectedTargetCategoryAIds}
                   selectedSectionAIds={selectedTargetSectionAIds}
                   isDeleting={isDeleting}
@@ -729,9 +926,18 @@ export default function MigratePage({ instances }: MigratePageProps) {
                   onRetryDeleteMapping={(mappingId) => void handleDeleteRetry([mappingId])}
                 />
               ) : null}
-              {!isTargetLoading && targetBrands.length === 0 ? (
+              {sourceInstanceId &&
+              !isMigratedTreeLoading &&
+              displayTargetBrands.length === 0 &&
+              resolveTargetBrandId() !== null ? (
                 <p className="muted migrate-panel-placeholder">
-                  수집된 데이터가 없습니다. 인스턴스 메뉴에서 {selectedTarget?.name ?? "타겟"} 인스턴스의 Help Center 수집을 실행하세요.
+                  아직 마이그레이션으로 생성된 항목이 없습니다. 소스에서 항목을 선택한 뒤 마이그레이션을 실행하세요.
+                </p>
+              ) : null}
+              {!isTargetBrandLoading && targetBrandOptions.length === 0 ? (
+                <p className="muted migrate-panel-placeholder">
+                  브랜드 정보가 없습니다. 인스턴스 메뉴에서 {selectedTarget?.name ?? "타겟"} 인스턴스의 Help Center 수집을
+                  실행하세요.
                 </p>
               ) : null}
             </>

@@ -69,6 +69,7 @@ class Section(Base):
     instance_id: Mapped[int] = mapped_column(ForeignKey("instances.id", ondelete="CASCADE"), nullable=False)
     a_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     a_category_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    a_parent_section_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     locale: Mapped[str | None] = mapped_column(String(20), nullable=True)
     position: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -99,6 +100,84 @@ class Article(Base):
     a_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class AiOcrSetting(Base):
+    """
+    AI-OCR 전역 설정(단일 행 id=1). Gemini·OpenAI 등 제공자별 계정·키·활성 프롬프트.
+    """
+
+    __tablename__ = "ai_ocr_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    active_provider: Mapped[str] = mapped_column(String(32), nullable=False, server_default="gemini")
+    active_prompt_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("ai_ocr_prompt_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    gemini_account: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    gemini_api_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    gemini_model: Mapped[str] = mapped_column(String(64), nullable=False, server_default="gemini-2.5-pro")
+    openai_account: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    openai_api_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    openai_model: Mapped[str] = mapped_column(String(64), nullable=False, server_default="gpt-4o")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class AiOcrPromptTemplate(Base):
+    """
+    저장된 OCR Vision 프롬프트 템플릿(여러 개 등록·선택).
+    """
+
+    __tablename__ = "ai_ocr_prompt_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    user_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class AiOcrAnalysisHistory(Base):
+    """
+    AI-OCR 분석 결과 이력(Gemini API 재호출 없이 미리보기 복원용).
+    """
+
+    __tablename__ = "ai_ocr_analysis_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ai_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    display_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    html_body: Mapped[str] = mapped_column(Text, nullable=False)
+    label_names: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    detected_product: Mapped[str] = mapped_column(String(255), nullable=False)
+    maintenance_cycle: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    body_preview_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class MigrationMapping(Base):
     __tablename__ = "migration_mappings"
     __table_args__ = (
@@ -122,8 +201,8 @@ class MigrationMapping(Base):
         nullable=False,
     )
     entity_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    source_entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    target_entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_entity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    target_entity_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     migrated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

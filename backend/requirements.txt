@@ -1,7 +1,9 @@
-fastapi
-uvicorn[standard]
-sqlalchemy
-asyncpg
-alembic
-python-dotenv
-httpx
+# zd-article-migrator API — PyPI 최신 안정 버전 고정 (2026-06-01 기준)
+fastapi==0.136.3
+python-multipart==0.0.30
+uvicorn[standard]==0.48.0
+sqlalchemy==2.0.50
+asyncpg==0.31.0
+alembic==1.18.4
+python-dotenv==1.2.2
+httpx==0.28.1

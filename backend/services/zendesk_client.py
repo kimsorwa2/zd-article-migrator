@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json as jsonlib
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -86,7 +87,7 @@ class ZendeskClient:
     @classmethod
     async def _request(
         cls,
-        method: Literal["GET", "POST", "PATCH", "DELETE"],
+        method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"],
         url: str,
         email: str,
         api_token: str,
@@ -97,7 +98,7 @@ class ZendeskClient:
         """
         /**
          * Zendesk API 공통 요청을 수행하고 재시도 정책을 적용한다.
-         * @param {"GET" | "POST" | "PATCH" | "DELETE"} method HTTP 메서드
+         * @param {"GET" | "POST" | "PUT" | "PATCH" | "DELETE"} method HTTP 메서드
          * @param {str} url 요청 URL
          * @param {str} email Zendesk 로그인 이메일
          * @param {str} api_token Zendesk API 토큰
@@ -148,7 +149,7 @@ class ZendeskClient:
     @classmethod
     async def request_json(
         cls,
-        method: Literal["GET", "POST", "PATCH", "DELETE"],
+        method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"],
         url: str,
         email: str,
         api_token: str,
@@ -157,7 +158,7 @@ class ZendeskClient:
         """
         /**
          * Zendesk API 요청 후 JSON 응답을 딕셔너리로 반환한다.
-         * @param {"GET" | "POST" | "PATCH" | "DELETE"} method HTTP 메서드
+         * @param {"GET" | "POST" | "PUT" | "PATCH" | "DELETE"} method HTTP 메서드
          * @param {str} url 요청 URL
          * @param {str} email Zendesk 로그인 이메일
          * @param {str} api_token Zendesk API 토큰
@@ -172,7 +173,15 @@ class ZendeskClient:
             api_token=api_token,
             json=json,
         )
-        return response.json()
+        try:
+            return response.json()
+        except jsonlib.JSONDecodeError as error:
+            body_preview = (response.text or "").strip()[:300]
+            raise ZendeskClientError(
+                "Zendesk 응답 JSON 파싱 실패: "
+                f"method={method}, status={response.status_code}, url={url}, "
+                f"body_preview={body_preview!r}"
+            ) from error
 
     @classmethod
     async def get_json(cls, url: str, email: str, api_token: str) -> dict[str, Any]:
@@ -206,6 +215,21 @@ class ZendeskClient:
          */
         """
         return await cls.request_json(method="POST", url=url, email=email, api_token=api_token, json=json)
+
+    @classmethod
+    async def put_json(
+        cls,
+        url: str,
+        email: str,
+        api_token: str,
+        json: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        /**
+         * PUT 요청으로 JSON 응답을 반환한다.
+         */
+        """
+        return await cls.request_json(method="PUT", url=url, email=email, api_token=api_token, json=json)
 
     @classmethod
     async def patch_json(

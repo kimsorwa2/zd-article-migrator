@@ -1,11 +1,14 @@
-import { parseApiErrorDetail } from "./parseApiError";
+import { parseApiErrorDetail, parseApiErrorLogs } from "./parseApiError";
+import type { WorkLogEntry } from "../components/WorkLogAccordion";
 
 export type DuplicatePolicy = "skip" | "update" | "force";
 
 export interface SourceBrand {
+  id: number;
   a_brand_id: number;
   name: string;
   subdomain: string;
+  has_help_center: boolean;
 }
 
 export interface Instance {
@@ -49,6 +52,13 @@ export interface FetchSyncStartResponse {
   status: string;
 }
 
+export interface FetchSyncWarning {
+  timestamp: string;
+  phase: string;
+  brand_name: string;
+  message: string;
+}
+
 export interface FetchSyncProgress {
   instance_id: number;
   status: "idle" | "running" | "completed" | "failed";
@@ -64,6 +74,7 @@ export interface FetchSyncProgress {
   attachments_total: number;
   error: string | null;
   result: FetchSyncResponse | null;
+  warnings: FetchSyncWarning[];
 }
 
 export interface FetchDetailArticle {
@@ -80,6 +91,8 @@ export interface FetchDetailSection {
   a_id: number;
   name: string;
   articles: FetchDetailArticle[];
+  /** parent_section_id로 연결된 하위 섹션 */
+  children?: FetchDetailSection[];
 }
 
 export interface FetchDetailCategory {
@@ -111,6 +124,19 @@ export interface FetchDetailResponse {
   brands: FetchDetailBrand[];
 }
 
+/** 마이그레이션으로 생성·DB에 저장된 타겟 트리(재수집 없이 조회) */
+export interface MigrateTargetTreeResponse extends FetchDetailResponse {
+  source_instance_id: number;
+  target_instance_id: number;
+  mapping_record_count: number;
+}
+
+export interface MigrateClearMappingsResponse {
+  source_instance_id: number;
+  target_instance_id: number;
+  deleted_count: number;
+}
+
 export interface MigrateExecuteResponse {
   source_instance_id: number;
   target_instance_id: number;
@@ -119,6 +145,9 @@ export interface MigrateExecuteResponse {
     categories: number;
     sections: number;
     articles: number;
+    scope_categories?: number;
+    scope_sections?: number;
+    scope_articles?: number;
   };
 }
 
@@ -139,6 +168,7 @@ export interface MigrateProgress {
   total_steps: number;
   error: string | null;
   result: MigrateExecuteResponse | null;
+  logs: string[];
 }
 
 export interface MigrateOverlayItem {
@@ -207,6 +237,126 @@ export interface DeleteFailedItem {
   error_message: string;
 }
 
+export type AiOcrProvider = "gemini" | "openai";
+
+export interface AiOcrProviderConfig {
+  account: string | null;
+  has_api_key: boolean;
+  api_key_masked: string | null;
+  model: string;
+}
+
+export interface AiOcrPromptTemplate {
+  id: number;
+  name: string;
+  description: string | null;
+  system_prompt: string;
+  user_prompt: string;
+  is_builtin: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AiOcrSettings {
+  active_provider: AiOcrProvider;
+  active_prompt_id: number | null;
+  gemini: AiOcrProviderConfig;
+  openai: AiOcrProviderConfig;
+  prompt_templates: AiOcrPromptTemplate[];
+  default_system_prompt: string;
+  default_user_prompt: string;
+}
+
+export interface AiOcrAnalyzeResult {
+  history_id: number;
+  title: string;
+  html_body: string;
+  label_names: string[];
+  detected_product: string;
+  maintenance_cycle: string | null;
+  body_preview_text: string;
+  logs: WorkLogEntry[];
+}
+
+export interface AiOcrAnalysisHistoryItem {
+  id: number;
+  label: string;
+  source_filename: string;
+  title: string;
+  html_body: string;
+  label_names: string[];
+  detected_product: string;
+  maintenance_cycle: string | null;
+  body_preview_text: string;
+  created_at: string;
+}
+
+export interface AiOcrCreateArticleResult {
+  article_id: number;
+  html_url: string | null;
+  section_a_id: number;
+  section_name: string;
+  logs: WorkLogEntry[];
+}
+
+export interface AiOcrSectionSelection {
+  brandId: number;
+  brandName: string;
+  categoryAId: number;
+  categoryName: string;
+  sectionAId: number;
+  sectionName: string;
+}
+
+export interface ImageConvertArticleItem {
+  id: number;
+  a_id: number;
+  title: string;
+  html_url: string | null;
+  section_name: string;
+  image_count: number;
+  label_names: string[];
+}
+
+export interface ImageConvertArticleDetail {
+  id: number;
+  a_id: number;
+  title: string;
+  html_url: string | null;
+  section_name: string;
+  label_names: string[];
+  body: string | null;
+  images: Array<{
+    index: number;
+    source_url: string;
+    filename: string;
+    availability: "ok" | "external_paste" | "unknown";
+    availability_reason: string | null;
+  }>;
+  brand_subdomain: string;
+}
+
+export interface ImageConvertAnalyzeResult {
+  history_id: number;
+  source_article_id: number;
+  source_article_a_id: number;
+  source_article_title: string;
+  title: string;
+  html_body: string;
+  label_names: string[];
+  detected_product: string;
+  maintenance_cycle: string | null;
+  body_preview_text: string;
+  image_count: number;
+  ocr_image_count: number;
+  image_previews: Array<{
+    index: number;
+    filename: string;
+    preview_data_url: string;
+  }>;
+  logs: WorkLogEntry[];
+}
+
 export interface DeleteExecuteResponse {
   source_instance_id: number;
   target_instance_id: number;
@@ -232,13 +382,19 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const fallback = `요청 실패: ${response.status}`;
     let detailMessage = fallback;
+    let logs: WorkLogEntry[] = [];
     try {
       const payload: unknown = await response.json();
       detailMessage = parseApiErrorDetail(payload, fallback);
+      logs = parseApiErrorLogs(payload);
     } catch {
       detailMessage = fallback;
     }
-    throw new Error(detailMessage);
+    const error = new Error(detailMessage) as Error & { logs?: WorkLogEntry[] };
+    if (logs.length > 0) {
+      error.logs = logs;
+    }
+    throw error;
   }
 
   if (response.status === 204) {
@@ -311,6 +467,11 @@ export const apiClient = {
     request<FetchSyncStartResponse>(`/fetch/${instanceId}/sync`, {
       method: "POST",
     }),
+  /** 선택한 브랜드 한 개만 Help Center 수집 */
+  syncInstanceBrand: (instanceId: number, brandId: number) =>
+    request<FetchSyncStartResponse>(`/fetch/${instanceId}/brands/${brandId}/sync`, {
+      method: "POST",
+    }),
   getSyncProgress: (instanceId: number) => request<FetchSyncProgress>(`/fetch/${instanceId}/sync/progress`),
   /** @deprecated syncInstance 사용 */
   syncSource: (instanceId: number) =>
@@ -340,6 +501,24 @@ export const apiClient = {
     request<MigrateOverlayResponse>(
       `/migrate/overlay?source_instance_id=${sourceInstanceId}&target_instance_id=${targetInstanceId}`,
     ),
+  clearMigrateMappings: (sourceInstanceId: number, targetInstanceId: number) =>
+    request<MigrateClearMappingsResponse>(
+      `/migrate/mappings?source_instance_id=${sourceInstanceId}&target_instance_id=${targetInstanceId}`,
+      { method: "DELETE" },
+    ),
+  getMigrateTargetTree: (
+    sourceInstanceId: number,
+    targetInstanceId: number,
+    targetBrandId?: number | null,
+  ) => {
+    const brandQuery =
+      targetBrandId !== undefined && targetBrandId !== null && targetBrandId > 0
+        ? `&target_brand_id=${targetBrandId}`
+        : "";
+    return request<MigrateTargetTreeResponse>(
+      `/migrate/target-tree?source_instance_id=${sourceInstanceId}&target_instance_id=${targetInstanceId}${brandQuery}`,
+    );
+  },
   getMigrateTree: (sourceInstanceId: number, targetInstanceId: number) =>
     request<MigrateTreeResponse>(`/migrate/tree?source_instance_id=${sourceInstanceId}&target_instance_id=${targetInstanceId}`),
   deletePreview: (payload: {
@@ -371,6 +550,141 @@ export const apiClient = {
     target_article_a_ids?: number[];
   }) =>
     request<DeleteExecuteResponse>("/delete/execute", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getAiOcrSettings: () => request<AiOcrSettings>("/ai-ocr/settings"),
+  getAiOcrHistory: () =>
+    request<{ items: AiOcrAnalysisHistoryItem[] }>("/ai-ocr/history"),
+  updateAiOcrSettings: (payload: {
+    active_provider?: AiOcrProvider;
+    active_prompt_id?: number | null;
+    gemini_account?: string | null;
+    gemini_api_key?: string | null;
+    gemini_model?: string | null;
+    openai_account?: string | null;
+    openai_api_key?: string | null;
+    openai_model?: string | null;
+  }) =>
+    request<AiOcrSettings>("/ai-ocr/settings", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  createAiOcrPrompt: (payload: {
+    name: string;
+    description?: string | null;
+    system_prompt: string;
+    user_prompt: string;
+    set_active?: boolean;
+  }) =>
+    request<AiOcrPromptTemplate>("/ai-ocr/prompts", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateAiOcrPrompt: (
+    templateId: number,
+    payload: {
+      name?: string;
+      description?: string | null;
+      system_prompt?: string;
+      user_prompt?: string;
+    },
+  ) =>
+    request<AiOcrPromptTemplate>(`/ai-ocr/prompts/${templateId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  deleteAiOcrPrompt: (templateId: number) =>
+    request<void>(`/ai-ocr/prompts/${templateId}`, { method: "DELETE" }),
+  listImageConvertArticles: (sourceInstanceId: number, query?: string) => {
+    const params = new URLSearchParams({ source_instance_id: String(sourceInstanceId) });
+    if (query?.trim()) {
+      params.set("q", query.trim());
+    }
+    return request<{ items: ImageConvertArticleItem[] }>(`/image-convert/articles?${params.toString()}`);
+  },
+  getImageConvertArticleDetail: (sourceInstanceId: number, articleId: number) => {
+    const params = new URLSearchParams({ source_instance_id: String(sourceInstanceId) });
+    return request<ImageConvertArticleDetail>(`/image-convert/articles/${articleId}?${params.toString()}`);
+  },
+  getImageConvertPreviewUrl: (sourceInstanceId: number, articleId: number, imageIndex: number) =>
+    `${API_BASE}/image-convert/articles/${articleId}/images/${imageIndex}?source_instance_id=${sourceInstanceId}`,
+  analyzeImageConvertArticle: (payload: { source_instance_id: number; article_id: number }) =>
+    request<ImageConvertAnalyzeResult>("/image-convert/analyze", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  analyzeImageConvertArticleWithFiles: async (payload: {
+    source_instance_id: number;
+    article_id: number;
+    image_indices: number[];
+    files: File[];
+  }): Promise<ImageConvertAnalyzeResult> => {
+    const formData = new FormData();
+    formData.append("source_instance_id", String(payload.source_instance_id));
+    formData.append("article_id", String(payload.article_id));
+    formData.append("image_indices", payload.image_indices.join(","));
+    for (const file of payload.files) {
+      formData.append("files", file);
+    }
+    const response = await fetch(`${API_BASE}/image-convert/analyze-with-files`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      const fallback = `요청 실패: ${response.status}`;
+      let detailMessage = fallback;
+      let logs: WorkLogEntry[] = [];
+      try {
+        const payload: unknown = await response.json();
+        detailMessage = parseApiErrorDetail(payload, fallback);
+        logs = parseApiErrorLogs(payload);
+      } catch {
+        detailMessage = fallback;
+      }
+      const error = new Error(detailMessage) as Error & { logs?: WorkLogEntry[] };
+      if (logs.length > 0) {
+        error.logs = logs;
+      }
+      throw error;
+    }
+    return (await response.json()) as ImageConvertAnalyzeResult;
+  },
+  analyzeAiOcrImage: async (file: File): Promise<AiOcrAnalyzeResult> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch(`${API_BASE}/ai-ocr/analyze`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      const fallback = `요청 실패: ${response.status}`;
+      let detailMessage = fallback;
+      let logs: WorkLogEntry[] = [];
+      try {
+        const payload: unknown = await response.json();
+        detailMessage = parseApiErrorDetail(payload, fallback);
+        logs = parseApiErrorLogs(payload);
+      } catch {
+        detailMessage = fallback;
+      }
+      const error = new Error(detailMessage) as Error & { logs?: WorkLogEntry[] };
+      error.logs = logs;
+      throw error;
+    }
+    return (await response.json()) as AiOcrAnalyzeResult;
+  },
+  createAiOcrArticle: (payload: {
+    instance_id: number;
+    brand_id: number;
+    section_a_id: number;
+    title: string;
+    html_body: string;
+    label_names: string[];
+    locale?: string;
+    draft?: boolean;
+  }) =>
+    request<AiOcrCreateArticleResult>("/ai-ocr/create-article", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

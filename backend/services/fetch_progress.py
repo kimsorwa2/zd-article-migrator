@@ -43,6 +43,7 @@ class FetchProgressSnapshot:
     attachments_total: int = 0
     error: str | None = None
     result: dict[str, Any] | None = None
+    warnings: list[dict[str, str]] = field(default_factory=list)
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +62,7 @@ class FetchProgressSnapshot:
             "attachments_total": self.attachments_total,
             "error": self.error,
             "result": self.result,
+            "warnings": self.warnings,
             "updated_at": self.updated_at.isoformat(),
         }
 
@@ -97,8 +99,43 @@ class FetchProgressTracker:
                 percent=0,
                 message="Help Center 수집을 시작합니다.",
                 phase="preparing",
+                warnings=[],
             )
         await cls._log_progress(instance_id)
+
+    @classmethod
+    async def add_warning(
+        cls,
+        instance_id: int,
+        *,
+        phase: str,
+        message: str,
+        brand_name: str | None = None,
+    ) -> None:
+        """
+        /**
+         * 수집을 중단하지 않고 경고 한 건을 누적한다(첨부 확인 등 부분 실패용).
+         */
+        """
+        entry = {
+            "timestamp": datetime.now(UTC).strftime("%H:%M:%S"),
+            "phase": phase,
+            "brand_name": brand_name or "",
+            "message": message,
+        }
+        async with cls._lock:
+            state = cls._states.get(instance_id)
+            if state is None:
+                return
+            state.warnings.append(entry)
+            state.updated_at = datetime.now(UTC)
+        logger.warning(
+            "[수집 경고] instance_id=%s brand=%s phase=%s %s",
+            instance_id,
+            brand_name or "-",
+            phase,
+            message,
+        )
 
     @classmethod
     async def set_brand_total(cls, instance_id: int, brand_total: int) -> None:
@@ -154,7 +191,13 @@ class FetchProgressTracker:
             state.status = "completed"
             state.percent = 100
             state.phase = "done"
-            state.message = "Help Center 수집이 완료되었습니다."
+            if state.warnings:
+                result = {**result, "warnings": list(state.warnings)}
+                state.message = (
+                    f"Help Center 수집이 완료되었습니다. (일부 항목 경고 {len(state.warnings)}건 — 아래 목록 확인)"
+                )
+            else:
+                state.message = "Help Center 수집이 완료되었습니다."
             state.result = result
             state.updated_at = datetime.now(UTC)
         await cls._log_progress(instance_id)

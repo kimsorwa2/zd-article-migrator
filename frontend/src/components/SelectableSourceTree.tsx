@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, FileText, Folder, Layers, Store } from "lucide-react";
 import type { FetchDetailBrand, FetchDetailCategory, FetchDetailSection } from "../api/client";
 import { countBrandArticles, countBrandSections, countCategoryArticles } from "../utils/fetchTreeUtils";
+import { NestedSectionTreeNodes, countSectionsForCategory } from "./NestedSectionTreeNodes";
 
 interface SelectableSourceTreeProps {
   brands: FetchDetailBrand[];
@@ -164,26 +165,37 @@ export default function SelectableSourceTree({
 
     return (
       <ul className="fetch-tree-children">
-        {category.sections.map((section) => {
-          const articleCount = section.articles.length;
-          return (
-            <li key={section.id} className="fetch-tree-node">
+        <NestedSectionTreeNodes
+          sections={category.sections}
+          level={2}
+          isExpanded={isExpanded}
+          renderSectionNode={(section, level, hasChildren) => {
+            const childCount = section.children?.length ?? 0;
+            const articleCount = section.articles.length;
+            const countParts: string[] = [];
+            if (childCount > 0) {
+              countParts.push(`하위 ${childCount}`);
+            }
+            if (articleCount > 0) {
+              countParts.push(`아티클 ${articleCount}`);
+            }
+            return (
               <SelectableTreeRow
                 checked={selectedSectionIds.includes(section.id)}
                 onCheckChange={(checked) => onToggleSection(section.id, checked)}
                 nodeKey={`section:${section.id}`}
                 label={section.name}
-                level={2}
-                hasChildren={articleCount > 0}
+                level={level}
+                hasChildren={hasChildren}
                 isExpanded={isExpanded(`section:${section.id}`)}
                 icon={<Layers size={15} />}
-                countLabel={articleCount > 0 ? `아티클 ${articleCount}` : undefined}
+                countLabel={countParts.length > 0 ? countParts.join(" · ") : undefined}
                 onExpandToggle={toggleExpand}
               />
-              {renderArticles(section)}
-            </li>
-          );
-        })}
+            );
+          }}
+          renderSectionChildren={(section) => renderArticles(section)}
+        />
       </ul>
     );
   }
@@ -200,7 +212,7 @@ export default function SelectableSourceTree({
     return (
       <ul className="fetch-tree-children">
         {brand.categories.map((category) => {
-          const sectionCount = category.sections.length;
+          const sectionCount = countSectionsForCategory(category);
           const articleCount = countCategoryArticles(category);
           return (
             <li key={category.id} className="fetch-tree-node">

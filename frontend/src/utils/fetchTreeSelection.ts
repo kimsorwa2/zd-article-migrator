@@ -1,4 +1,5 @@
 import type { FetchDetailBrand } from "../api/client";
+import { walkSections } from "./sectionTreeUtils";
 
 export interface FetchTreeChildMaps {
   brandToCategories: Map<number, number[]>;
@@ -27,15 +28,16 @@ export function buildFetchTreeChildMaps(brands: FetchDetailBrand[]): FetchTreeCh
     brandToCategories.set(brand.id, categoryIds);
 
     for (const category of brand.categories) {
-      const sectionIds = category.sections.map((section) => section.id);
+      const sectionIds: number[] = [];
       categoryToSections.set(category.id, sectionIds);
 
-      for (const section of category.sections) {
+      walkSections(category.sections, (section) => {
+        sectionIds.push(section.id);
         sectionToArticles.set(
           section.id,
           section.articles.map((article) => article.id),
         );
-      }
+      });
     }
   }
 
@@ -56,12 +58,12 @@ export function collectAllFetchTreeIds(brands: FetchDetailBrand[]): FetchTreeAll
     brandIds.push(brand.id);
     for (const category of brand.categories) {
       categoryIds.push(category.id);
-      for (const section of category.sections) {
+      walkSections(category.sections, (section) => {
         sectionIds.push(section.id);
         for (const article of section.articles) {
           articleIds.push(article.id);
         }
-      }
+      });
     }
   }
 
@@ -82,12 +84,12 @@ export function buildFetchTreeAIdMaps(brands: FetchDetailBrand[]) {
     brandMap.set(brand.id, brand.a_brand_id);
     for (const category of brand.categories) {
       categoryMap.set(category.id, category.a_id);
-      for (const section of category.sections) {
+      walkSections(category.sections, (section) => {
         sectionMap.set(section.id, section.a_id);
         for (const article of section.articles) {
           articleMap.set(article.id, article.a_id);
         }
-      }
+      });
     }
   }
 

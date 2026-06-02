@@ -2,7 +2,7 @@ import logging
 
 from fastapi import FastAPI
 
-from api.routers import delete, fetch, instances, migrate
+from api.routers import ai_ocr, delete, fetch, image_convert, instances, migrate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +22,8 @@ app.include_router(instances.router, prefix="/api")
 app.include_router(fetch.router, prefix="/api")
 app.include_router(migrate.router, prefix="/api")
 app.include_router(delete.router, prefix="/api")
+app.include_router(ai_ocr.router, prefix="/api")
+app.include_router(image_convert.router, prefix="/api")
 
 
 @app.get("/api/health")

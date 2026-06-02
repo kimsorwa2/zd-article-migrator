@@ -6,10 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.schemas import (
     MigrateExecuteRequest,
     MigrateExecuteResponse,
+    MigrateClearMappingsResponse,
     MigrateExecuteStartResponse,
     MigrateOverlayResponse,
     MigrateProgressResponse,
     MigrateSummaryResponse,
+    MigrateTargetTreeResponse,
     MigrateTreeResponse,
 )
 from db.database import get_async_session
@@ -44,6 +46,9 @@ def _progress_to_response(snapshot) -> MigrateProgressResponse:
                 categories=summary_data.get("categories", 0),
                 sections=summary_data.get("sections", 0),
                 articles=summary_data.get("articles", 0),
+                scope_categories=summary_data.get("scope_categories", 0),
+                scope_sections=summary_data.get("scope_sections", 0),
+                scope_articles=summary_data.get("scope_articles", 0),
             ),
         )
     return MigrateProgressResponse(
@@ -57,6 +62,7 @@ def _progress_to_response(snapshot) -> MigrateProgressResponse:
         total_steps=snapshot.total_steps,
         error=snapshot.error,
         result=result,
+        logs=list(snapshot.logs),
     )
 
 
@@ -150,6 +156,64 @@ async def get_migration_overlay(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
     return MigrateOverlayResponse.model_validate(data)
+
+
+@router.delete("/mappings", response_model=MigrateClearMappingsResponse)
+async def clear_migration_mappings(
+    source_instance_id: int = Query(..., ge=1),
+    target_instance_id: int = Query(..., ge=1),
+    session: AsyncSession = Depends(get_async_session),
+) -> MigrateClearMappingsResponse:
+    """
+    /**
+     * 소스·타겟 쌍의 migration_mappings만 삭제한다(타겟 Help Center 수집 데이터는 유지).
+     */
+    """
+    if source_instance_id == target_instance_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="소스와 타겟 인스턴스는 서로 달라야 합니다.",
+        )
+
+    try:
+        deleted_count = await MigrationService.clear_migration_mappings(
+            session=session,
+            source_instance_id=source_instance_id,
+            target_instance_id=target_instance_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    return MigrateClearMappingsResponse(
+        source_instance_id=source_instance_id,
+        target_instance_id=target_instance_id,
+        deleted_count=deleted_count,
+    )
+
+
+@router.get("/target-tree", response_model=MigrateTargetTreeResponse)
+async def get_migrated_target_tree(
+    source_instance_id: int = Query(..., ge=1),
+    target_instance_id: int = Query(..., ge=1),
+    target_brand_id: int | None = Query(default=None, ge=1),
+    session: AsyncSession = Depends(get_async_session),
+) -> MigrateTargetTreeResponse:
+    """
+    /**
+     * 마이그레이션으로 생성·DB에 저장된 타겟 항목만 트리로 조회한다(재수집 불필요).
+     */
+    """
+    try:
+        data = await MigrationService.get_migrated_target_tree(
+            session=session,
+            source_instance_id=source_instance_id,
+            target_instance_id=target_instance_id,
+            target_brand_id=target_brand_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    return MigrateTargetTreeResponse.model_validate(data)
 
 
 @router.get("/tree", response_model=MigrateTreeResponse)

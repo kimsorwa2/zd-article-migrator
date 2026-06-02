@@ -98,7 +98,13 @@ async def preview_source_brands(payload: SourceBrandPreviewRequest) -> list[Sour
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
     return [
-        SourceBrandResponse(a_brand_id=brand.id, name=brand.name, subdomain=brand.subdomain)
+        SourceBrandResponse(
+            id=0,
+            a_brand_id=brand.id,
+            name=brand.name,
+            subdomain=brand.subdomain,
+            has_help_center=brand.has_help_center,
+        )
         for brand in brands
     ]
 
@@ -169,7 +175,13 @@ async def _create_instance_with_brands(
     return InstanceDetailResponse(
         **InstanceResponse.model_validate(instance).model_dump(),
         brands=[
-            SourceBrandResponse(a_brand_id=row.a_brand_id, name=row.name, subdomain=row.subdomain)
+            SourceBrandResponse(
+                id=row.id,
+                a_brand_id=row.a_brand_id,
+                name=row.name,
+                subdomain=row.subdomain,
+                has_help_center=row.has_help_center,
+            )
             for row in brand_rows
         ],
     )
@@ -273,7 +285,13 @@ async def get_instance(
     return InstanceDetailResponse(
         **InstanceResponse.model_validate(instance).model_dump(),
         brands=[
-            SourceBrandResponse(a_brand_id=brand.a_brand_id, name=brand.name, subdomain=brand.subdomain)
+            SourceBrandResponse(
+                id=brand.id,
+                a_brand_id=brand.a_brand_id,
+                name=brand.name,
+                subdomain=brand.subdomain,
+                has_help_center=brand.has_help_center,
+            )
             for brand in brands
         ],
     )

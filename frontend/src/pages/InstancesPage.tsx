@@ -36,6 +36,8 @@ export default function InstancesPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  /** 단건 브랜드 수집 시 대상 brand.id (전체 수집이면 null) */
+  const [syncingBrandId, setSyncingBrandId] = useState<number | null>(null);
   const [syncProgress, setSyncProgress] = useState<FetchSyncProgress | null>(null);
 
   const SYNC_POLL_INTERVAL_MS = 800;
@@ -50,6 +52,17 @@ export default function InstancesPage() {
     try {
       const data = await apiClient.listInstances();
       setInstances(data);
+      // 미선택·삭제된 선택 상태면 목록 첫 항목을 자동 선택한다.
+      setSelectedInstanceId((current) => {
+        if (data.length === 0) {
+          return 0;
+        }
+        const stillExists = data.some((instance) => instance.id === current);
+        if (current === 0 || !stillExists) {
+          return data[0].id;
+        }
+        return current;
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "인스턴스 조회 실패", { variant: "error" });
     } finally {
@@ -149,45 +162,86 @@ export default function InstancesPage() {
     }
   }
 
-  async function handleSync() {
+  /**
+   * Help Center 수집을 시작하고 완료까지 폴링한다.
+   * @param brandId 지정 시 해당 브랜드만 수집, 생략 시 선택된 전체 브랜드 수집
+   */
+  async function runInstanceSync(brandId?: number) {
     if (!selectedInstanceId) {
       setMessage("인스턴스를 먼저 선택하세요.", { variant: "error" });
       return;
     }
 
+    const brandLabel =
+      brandId !== undefined ? (detail?.brands.find((brand) => brand.id === brandId)?.name ?? "브랜드") : null;
+
     setSyncError("");
+    setSyncingBrandId(brandId ?? null);
     setSyncProgress({
       instance_id: selectedInstanceId,
       status: "running",
       percent: 0,
-      message: "Help Center 수집을 시작합니다...",
+      message: brandLabel ? `「${brandLabel}」 수집을 시작합니다...` : "전체 브랜드 수집을 시작합니다...",
       phase: "preparing",
       brand_index: 0,
       brand_total: 0,
-      brand_name: null,
+      brand_name: brandLabel,
       article_page: 0,
       articles_collected: 0,
       attachments_checked: 0,
       attachments_total: 0,
       error: null,
       result: null,
+      warnings: [],
     });
     setIsSyncing(true);
     try {
-      await apiClient.syncInstance(selectedInstanceId);
+      if (brandId !== undefined) {
+        await apiClient.syncInstanceBrand(selectedInstanceId, brandId);
+      } else {
+        await apiClient.syncInstance(selectedInstanceId);
+      }
       const finalProgress = await waitForSyncCompletion(selectedInstanceId);
+      setSyncProgress(finalProgress);
       const processedBrands = finalProgress.result?.processed_brands ?? 0;
-      setMessage(`Help Center 수집 완료 (브랜드 ${processedBrands}개 처리)`);
+      const warningCount = finalProgress.warnings?.length ?? 0;
+      if (brandLabel) {
+        setMessage(
+          warningCount > 0
+            ? `「${brandLabel}」 수집 완료 (경고 ${warningCount}건)`
+            : `「${brandLabel}」 수집 완료`,
+        );
+      } else {
+        setMessage(
+          warningCount > 0
+            ? `전체 브랜드 수집 완료 (${processedBrands}개, 경고 ${warningCount}건)`
+            : `전체 브랜드 수집 완료 (브랜드 ${processedBrands}개 처리)`,
+        );
+      }
       await loadInstances();
       await loadDetail(selectedInstanceId);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Help Center 수집 실패";
       setSyncError(errorMessage);
       setMessage(errorMessage, { variant: "error" });
+      try {
+        const failedProgress = await apiClient.getSyncProgress(selectedInstanceId);
+        setSyncProgress(failedProgress);
+      } catch {
+        // 폴링 실패 시 기존 진행 상태 유지
+      }
     } finally {
       setIsSyncing(false);
-      setSyncProgress(null);
+      setSyncingBrandId(null);
     }
+  }
+
+  async function handleSync() {
+    await runInstanceSync();
+  }
+
+  async function handleSyncBrand(brandId: number) {
+    await runInstanceSync(brandId);
   }
 
   async function handleToggleActive(instance: Instance) {
@@ -264,8 +318,6 @@ export default function InstancesPage() {
       await apiClient.deleteInstance(instance.id);
       setMessage(`인스턴스 「${instance.name}」 삭제 완료`);
       if (selectedInstanceId === instance.id) {
-        setSelectedInstanceId(0);
-        setDetail(null);
         setSyncError("");
         setSyncProgress(null);
         setIsSyncing(false);
@@ -283,13 +335,15 @@ export default function InstancesPage() {
 
   return (
     <section className="page">
-      <h2 className="title-with-icon">
-        <Database size={20} aria-hidden="true" />
-        인스턴스 관리
-      </h2>
-      <p className="muted page-lead">
-        Zendesk 계정을 등록하고 Help Center 데이터를 수집합니다. 마이그레이션 시 등록된 인스턴스 중에서 소스와 타겟을 선택합니다.
-      </p>
+      <header className="page-top">
+        <h2 className="page-title">
+          <Database size={22} aria-hidden="true" />
+          인스턴스 관리
+        </h2>
+        <p className="page-lead">
+          Zendesk 계정을 등록하고 Help Center 데이터를 수집합니다. 마이그레이션 시 등록된 인스턴스 중에서 소스와 타겟을 선택합니다.
+        </p>
+      </header>
       {message ? <NoticeBanner message={message} variant={noticeVariant} onDismiss={clearMessage} /> : null}
 
       <div className="instances-split">
@@ -369,13 +423,24 @@ export default function InstancesPage() {
                   <p className="muted">{selectedInstance.subdomain}</p>
                   <p className="muted">마지막 수집: {formatFetchedAt(selectedInstance.last_fetched_at)}</p>
                 </div>
-                <button type="button" className="migrate-primary-action" disabled={isSyncing} onClick={() => void handleSync()}>
+                <button
+                  type="button"
+                  className="migrate-primary-action"
+                  disabled={isSyncing}
+                  title="선택된 모든 브랜드를 순차 수집합니다"
+                  onClick={() => void handleSync()}
+                >
                   <FolderSync size={16} aria-hidden="true" />
-                  {isSyncing ? "수집 중..." : "Help Center 수집"}
+                  {isSyncing && syncingBrandId === null ? "수집 중..." : "전체 브랜드 수집"}
                 </button>
               </div>
 
-              {isSyncing && syncProgress ? <SyncProgressPanel progress={syncProgress} /> : null}
+              {syncProgress ? (
+                <SyncProgressPanel
+                  progress={syncProgress}
+                  onDismiss={() => setSyncProgress(null)}
+                />
+              ) : null}
 
               {syncError ? (
                 <NoticeBanner
@@ -393,7 +458,13 @@ export default function InstancesPage() {
                     브랜드 {detail.summary.total_brands} · 카테고리 {detail.summary.total_categories} · 섹션 {detail.summary.total_sections} · 아티클{" "}
                     {detail.summary.total_articles}
                   </p>
-                  <FetchDataTree title="Help Center 구조" brands={detail.brands} />
+                  <FetchDataTree
+                    title="Help Center 구조"
+                    brands={detail.brands}
+                    onSyncBrand={(brandId) => void handleSyncBrand(brandId)}
+                    syncingBrandId={syncingBrandId}
+                    syncDisabled={isSyncing}
+                  />
                 </>
               ) : null}
               {!isDetailLoading && !detail?.brands.length ? (

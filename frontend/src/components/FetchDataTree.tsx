@@ -1,55 +1,26 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, ExternalLink, FileText, Folder, Layers, Paperclip, Store } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, FileText, Folder, FolderSync, Layers, Paperclip, Store } from "lucide-react";
 import type { FetchDetailBrand, FetchDetailCategory, FetchDetailSection } from "../api/client";
+import { NestedSectionTreeNodes, countSectionsForCategory } from "./NestedSectionTreeNodes";
+import {
+  countBrandArticles,
+  countBrandSections,
+  countCategoryArticles,
+  collectAllNodeKeys,
+} from "../utils/fetchTreeUtils";
 
 interface FetchDataTreeProps {
   title: string;
   brands: FetchDetailBrand[];
+  /** 브랜드 단건 수집 콜백 (미지정 시 브랜드별 버튼 숨김) */
+  onSyncBrand?: (brandId: number) => void;
+  /** 현재 수집 중인 브랜드 DB id (단건 수집 시) */
+  syncingBrandId?: number | null;
+  /** 전체/단건 수집 진행 중이면 브랜드 버튼 비활성화 */
+  syncDisabled?: boolean;
 }
 
 type TreeNodeKey = string;
-
-/**
- * 카테고리 하위 아티클 총 개수를 계산한다.
- * @param category 카테고리 노드
- */
-function countCategoryArticles(category: FetchDetailCategory): number {
-  return category.sections.reduce((sum, section) => sum + section.articles.length, 0);
-}
-
-/**
- * 브랜드 하위 섹션 총 개수를 계산한다.
- * @param brand 브랜드 노드
- */
-function countBrandSections(brand: FetchDetailBrand): number {
-  return brand.categories.reduce((sum, category) => sum + category.sections.length, 0);
-}
-
-/**
- * 브랜드 하위 아티클 총 개수를 계산한다.
- * @param brand 브랜드 노드
- */
-function countBrandArticles(brand: FetchDetailBrand): number {
-  return brand.categories.reduce((sum, category) => sum + countCategoryArticles(category), 0);
-}
-
-/**
- * 트리 전체에서 접기/펼치기에 사용할 노드 키 목록을 만든다.
- * @param brands 브랜드 트리 데이터
- */
-function collectAllNodeKeys(brands: FetchDetailBrand[]): TreeNodeKey[] {
-  const keys: TreeNodeKey[] = [];
-  for (const brand of brands) {
-    keys.push(`brand:${brand.id}`);
-    for (const category of brand.categories) {
-      keys.push(`category:${category.id}`);
-      for (const section of category.sections) {
-        keys.push(`section:${section.id}`);
-      }
-    }
-  }
-  return keys;
-}
 
 interface TreeNodeHeaderProps {
   nodeKey: TreeNodeKey;
@@ -107,7 +78,13 @@ function TreeNodeHeader({
  * @param title 트리 섹션 제목
  * @param brands 브랜드 → 카테고리 → 섹션 → 아티클 트리 데이터
  */
-export default function FetchDataTree({ title, brands }: FetchDataTreeProps) {
+export default function FetchDataTree({
+  title,
+  brands,
+  onSyncBrand,
+  syncingBrandId = null,
+  syncDisabled = false,
+}: FetchDataTreeProps) {
   const [expandedKeys, setExpandedKeys] = useState<Set<TreeNodeKey>>(() => new Set());
   const allNodeKeys = useMemo(() => collectAllNodeKeys(brands), [brands]);
 
@@ -191,24 +168,35 @@ export default function FetchDataTree({ title, brands }: FetchDataTreeProps) {
 
     return (
       <ul className="fetch-tree-children">
-        {category.sections.map((section) => {
-          const articleCount = section.articles.length;
-          return (
-            <li key={section.id} className="fetch-tree-node">
+        <NestedSectionTreeNodes
+          sections={category.sections}
+          level={2}
+          isExpanded={isExpanded}
+          renderSectionNode={(section, level, hasChildren) => {
+            const childCount = section.children?.length ?? 0;
+            const articleCount = section.articles.length;
+            const countParts: string[] = [];
+            if (childCount > 0) {
+              countParts.push(`하위 섹션 ${childCount}`);
+            }
+            if (articleCount > 0) {
+              countParts.push(`아티클 ${articleCount}`);
+            }
+            return (
               <TreeNodeHeader
                 nodeKey={`section:${section.id}`}
                 label={section.name}
-                level={2}
-                hasChildren={articleCount > 0}
+                level={level}
+                hasChildren={hasChildren}
                 isExpanded={isExpanded(`section:${section.id}`)}
                 icon={<Layers size={15} />}
-                countLabel={articleCount > 0 ? `아티클 ${articleCount}` : undefined}
+                countLabel={countParts.length > 0 ? countParts.join(" · ") : undefined}
                 onToggle={toggleNode}
               />
-              {renderArticles(section)}
-            </li>
-          );
-        })}
+            );
+          }}
+          renderSectionChildren={(section) => renderArticles(section)}
+        />
       </ul>
     );
   }
@@ -225,7 +213,7 @@ export default function FetchDataTree({ title, brands }: FetchDataTreeProps) {
     return (
       <ul className="fetch-tree-children">
         {brand.categories.map((category) => {
-          const sectionCount = category.sections.length;
+          const sectionCount = countSectionsForCategory(category);
           const articleCount = countCategoryArticles(category);
           return (
             <li key={category.id} className="fetch-tree-node">
@@ -284,24 +272,50 @@ export default function FetchDataTree({ title, brands }: FetchDataTreeProps) {
               countParts.push(`아티클 ${articleCount}`);
             }
 
+            const isThisBrandSyncing = syncingBrandId === brand.id;
+            const canSyncBrand = Boolean(onSyncBrand) && brand.has_help_center && !syncDisabled && !isThisBrandSyncing;
+
             return (
               <li key={brand.id} className="fetch-tree-node fetch-tree-node-brand">
-                <TreeNodeHeader
-                  nodeKey={`brand:${brand.id}`}
-                  label={brand.name}
-                  level={0}
-                  hasChildren={categoryCount > 0}
-                  isExpanded={isExpanded(`brand:${brand.id}`)}
-                  icon={<Store size={16} />}
-                  countLabel={countParts.length > 0 ? countParts.join(" · ") : undefined}
-                  meta={
-                    <>
-                      <span className="badge badge-gray">{brand.subdomain}</span>
-                      {!brand.has_help_center ? <span className="badge badge-yellow">Help Center 없음</span> : null}
-                    </>
-                  }
-                  onToggle={toggleNode}
-                />
+                <div className="fetch-tree-brand-row">
+                  <TreeNodeHeader
+                    nodeKey={`brand:${brand.id}`}
+                    label={brand.name}
+                    level={0}
+                    hasChildren={categoryCount > 0}
+                    isExpanded={isExpanded(`brand:${brand.id}`)}
+                    icon={<Store size={16} />}
+                    countLabel={countParts.length > 0 ? countParts.join(" · ") : undefined}
+                    meta={
+                      <>
+                        <span className="badge badge-gray">{brand.subdomain}</span>
+                        {!brand.has_help_center ? <span className="badge badge-yellow">Help Center 없음</span> : null}
+                      </>
+                    }
+                    onToggle={toggleNode}
+                  />
+                  {onSyncBrand ? (
+                    <button
+                      type="button"
+                      className="button-ghost tree-brand-sync-btn"
+                      title={
+                        !brand.has_help_center
+                          ? "Help Center가 없는 브랜드는 수집할 수 없습니다"
+                          : syncDisabled
+                            ? "다른 수집 작업이 진행 중입니다"
+                            : `${brand.name} 브랜드만 수집`
+                      }
+                      disabled={!canSyncBrand}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSyncBrand(brand.id);
+                      }}
+                    >
+                      <FolderSync size={14} aria-hidden="true" />
+                      {isThisBrandSyncing ? "수집 중..." : "이 브랜드 수집"}
+                    </button>
+                  ) : null}
+                </div>
                 {renderCategories(brand)}
               </li>
             );
@@ -309,7 +323,10 @@ export default function FetchDataTree({ title, brands }: FetchDataTreeProps) {
         </ul>
       )}
 
-      <p className="muted fetch-tree-hint">브랜드·카테고리·섹션 행을 클릭하면 하위 항목을 펼치거나 접을 수 있습니다.</p>
+      <p className="muted fetch-tree-hint">
+        브랜드·카테고리·섹션 행을 클릭하면 하위 항목을 펼치거나 접을 수 있습니다.
+        {onSyncBrand ? " 브랜드별로 「이 브랜드 수집」을 사용하면 전체 수집보다 빠르게 갱신할 수 있습니다." : null}
+      </p>
     </div>
   );
 }

@@ -478,7 +478,7 @@ class DeleteService:
 
         for mapping in category_mappings:
             await delete_with_status(
-                mapping, f"/api/v2/help_center/sections/{mapping.target_entity_id}.json", "sections"
+                mapping, f"/api/v2/help_center/categories/{mapping.target_entity_id}.json", "categories"
             )
 
         for mapping in brand_mappings:

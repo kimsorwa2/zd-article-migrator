@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Article, Brand, Category, Instance, Section
 from services.fetch_progress import FetchProgressTracker
+from services.help_center_tree import build_nested_section_nodes
 from services.zendesk_client import ZendeskClient, ZendeskClientError
 
 
@@ -329,8 +330,22 @@ class FetchService:
                         fetch_step="article_attachments",
                     )
                     item["_has_attachments"] = len(payload.get("article_attachments", [])) > 0
-                except ZendeskClientError:
+                except ZendeskClientError as error:
                     item["_has_attachments"] = False
+                    await FetchProgressTracker.add_warning(
+                        instance_id,
+                        phase="article_attachments",
+                        brand_name=brand_name,
+                        message=f"article a_id={article_a_id}: {error}",
+                    )
+                except Exception as error:
+                    item["_has_attachments"] = False
+                    await FetchProgressTracker.add_warning(
+                        instance_id,
+                        phase="article_attachments",
+                        brand_name=brand_name,
+                        message=f"article a_id={article_a_id}: {error}",
+                    )
 
             async with progress_lock:
                 checked_count += 1
@@ -438,13 +453,22 @@ class FetchService:
             )
             row = await session.scalar(query)
             if row is None:
-                row = Section(instance_id=instance_id, a_id=item["id"], a_category_id=item["category_id"], name=item["name"])
+                parent_section_id = item.get("parent_section_id")
+                row = Section(
+                    instance_id=instance_id,
+                    a_id=item["id"],
+                    a_category_id=item["category_id"],
+                    a_parent_section_id=int(parent_section_id) if parent_section_id else None,
+                    name=item["name"],
+                )
                 session.add(row)
                 counts.created += 1
             else:
                 counts.updated += 1
 
             row.a_category_id = item["category_id"]
+            parent_section_id = item.get("parent_section_id")
+            row.a_parent_section_id = int(parent_section_id) if parent_section_id else None
             row.name = item["name"]
             row.locale = item.get("locale")
             row.position = item.get("position")
@@ -542,6 +566,210 @@ class FetchService:
         return counts
 
     @classmethod
+    async def _sync_one_brand(
+        cls,
+        session: AsyncSession,
+        *,
+        instance: Instance,
+        instance_id: int,
+        brand: Brand,
+        brand_index: int,
+        brand_total: int,
+    ) -> FetchBrandSummary | None:
+        """
+        /**
+         * 단일 브랜드의 카테고리·섹션·아티클을 Zendesk에서 수집해 DB에 반영한다.
+         * @returns {FetchBrandSummary | None} Help Center 없으면 None
+         */
+        """
+        await FetchProgressTracker.update_brand_step(
+            instance_id,
+            brand_index=brand_index,
+            brand_name=brand.name,
+            phase="brand_meta",
+            message=f"브랜드 메타 조회 중 ({brand_index}/{brand_total}): {brand.name}",
+        )
+        brand_meta_url = f"https://{instance.subdomain}.zendesk.com/api/v2/brands/{brand.a_brand_id}"
+        brand_meta_payload = await cls._fetch_json_with_context(
+            url=brand_meta_url,
+            email=instance.email,
+            api_token=instance.api_token,
+            brand_name=brand.name,
+            fetch_step="brand_meta",
+        )
+        brand_meta = brand_meta_payload.get("brand", {})
+        if isinstance(brand_meta, dict):
+            meta_subdomain = brand_meta.get("subdomain")
+            if isinstance(meta_subdomain, str) and meta_subdomain.strip():
+                brand.subdomain = meta_subdomain.strip()
+            brand.has_help_center = bool(brand_meta.get("has_help_center", brand.has_help_center))
+
+        if not brand.has_help_center:
+            logger.info(
+                "브랜드 수집 건너뜀: instance_id=%s, brand=%s, reason=has_help_center=false",
+                instance_id,
+                brand.name,
+            )
+            return None
+
+        logger.info("브랜드 수집 시작: instance_id=%s, brand=%s(%s)", instance_id, brand.name, brand.subdomain)
+        summary = FetchBrandSummary(brand_id=brand.id, brand_name=brand.name)
+
+        base_url = f"https://{brand.subdomain}.zendesk.com/api/v2/help_center"
+        categories_url = f"{base_url}/categories.json"
+
+        await FetchProgressTracker.update_brand_step(
+            instance_id,
+            brand_index=brand_index,
+            brand_name=brand.name,
+            phase="categories",
+            message=f"{brand.name} 카테고리 수집 중",
+        )
+        categories_payload = await cls._fetch_json_with_context(
+            url=categories_url,
+            email=instance.email,
+            api_token=instance.api_token,
+            brand_name=brand.name,
+            fetch_step="categories",
+        )
+        category_items = categories_payload.get("categories", [])
+        summary.categories = await cls._sync_categories(
+            session=session,
+            instance_id=instance_id,
+            brand=brand,
+            categories=category_items,
+        )
+        brand_category_a_ids = {item["id"] for item in category_items}
+
+        await FetchProgressTracker.update_brand_step(
+            instance_id,
+            brand_index=brand_index,
+            brand_name=brand.name,
+            phase="sections",
+            message=f"{brand.name} 섹션 수집 중",
+        )
+        sections_payload = await cls._fetch_json_with_context(
+            url=f"{base_url}/sections.json",
+            email=instance.email,
+            api_token=instance.api_token,
+            brand_name=brand.name,
+            fetch_step="sections",
+        )
+        section_items = sections_payload.get("sections", [])
+        summary.sections = await cls._sync_sections(
+            session=session,
+            instance_id=instance_id,
+            brand_category_a_ids=brand_category_a_ids,
+            sections=section_items,
+        )
+        brand_section_a_ids = {item["id"] for item in section_items}
+
+        article_items = await cls._fetch_all_help_center_articles(
+            instance_id=instance_id,
+            brand_index=brand_index,
+            base_url=base_url,
+            email=instance.email,
+            api_token=instance.api_token,
+            brand_name=brand.name,
+        )
+
+        await cls._enrich_articles_with_attachment_flags(
+            instance_id=instance_id,
+            brand_index=brand_index,
+            brand_subdomain=brand.subdomain,
+            email=instance.email,
+            api_token=instance.api_token,
+            brand_name=brand.name,
+            article_items=article_items,
+        )
+
+        await FetchProgressTracker.update_brand_step(
+            instance_id,
+            brand_index=brand_index,
+            brand_name=brand.name,
+            phase="saving",
+            message=f"{brand.name} DB 저장 중 ({len(article_items):,} 아티클)",
+            articles_collected=len(article_items),
+        )
+        summary.articles = await cls._sync_articles(
+            session=session,
+            instance_id=instance_id,
+            brand_subdomain=brand.subdomain,
+            brand_section_a_ids=brand_section_a_ids,
+            articles=article_items,
+        )
+
+        logger.info(
+            "브랜드 수집 완료: instance_id=%s, brand=%s, categories=%s, sections=%s, articles=%s",
+            instance_id,
+            brand.name,
+            summary.categories.total,
+            summary.sections.total,
+            summary.articles.total,
+        )
+        return summary
+
+    @classmethod
+    async def sync_source_brand(
+        cls,
+        session: AsyncSession,
+        *,
+        instance_id: int,
+        brand_id: int,
+    ) -> list[FetchBrandSummary]:
+        """
+        /**
+         * 선택한 브랜드 한 개만 수집한다.
+         * @param {int} instance_id 인스턴스 ID
+         * @param {int} brand_id DB 브랜드 PK
+         * @returns {list[FetchBrandSummary]} 수집 결과(0~1건)
+         */
+        """
+        instance = await session.get(Instance, instance_id)
+        if instance is None:
+            raise ValueError("인스턴스를 찾을 수 없습니다.")
+
+        brand = await session.scalar(
+            select(Brand).where(Brand.id == brand_id, Brand.instance_id == instance_id)
+        )
+        if brand is None:
+            raise ValueError("브랜드를 찾을 수 없습니다.")
+        if not brand.is_selected:
+            raise ValueError("인스턴스에 선택되지 않은 브랜드입니다.")
+
+        await FetchProgressTracker.start(instance_id)
+        await FetchProgressTracker.update_brand_step(
+            instance_id,
+            brand_index=0,
+            brand_name=brand.name,
+            phase="preparing",
+            message=f"「{brand.name}」 브랜드 수집을 준비하는 중입니다.",
+        )
+
+        await cls._ensure_brands(session=session, instance=instance)
+        await FetchProgressTracker.set_brand_total(instance_id, 1)
+
+        summary = await cls._sync_one_brand(
+            session,
+            instance=instance,
+            instance_id=instance_id,
+            brand=brand,
+            brand_index=1,
+            brand_total=1,
+        )
+        summaries = [summary] if summary is not None else []
+
+        instance.last_fetched_at = datetime.now(UTC)
+        await session.commit()
+        logger.info(
+            "브랜드 단건 수집 완료: instance_id=%s, brand_id=%s, brand=%s",
+            instance_id,
+            brand_id,
+            brand.name,
+        )
+        return summaries
+
+    @classmethod
     async def sync_source_instance(cls, session: AsyncSession, instance_id: int) -> list[FetchBrandSummary]:
         """
         /**
@@ -561,7 +789,7 @@ class FetchService:
             brand_index=0,
             brand_name="",
             phase="preparing",
-            message="브랜드 정보를 준비하는 중입니다.",
+            message="전체 브랜드 수집을 준비하는 중입니다.",
         )
 
         await cls._ensure_brands(session=session, instance=instance)
@@ -573,7 +801,8 @@ class FetchService:
         )
         brands_result = await session.execute(brands_query)
         brands = brands_result.scalars().all()
-        await FetchProgressTracker.set_brand_total(instance_id, len(brands))
+        brand_total = len(brands)
+        await FetchProgressTracker.set_brand_total(instance_id, brand_total)
 
         summaries: list[FetchBrandSummary] = []
         brand_index = 0
@@ -581,129 +810,16 @@ class FetchService:
         # 브랜드별로 순차 호출하여 API rate limit 초과를 방지한다.
         for brand in brands:
             brand_index += 1
-            await FetchProgressTracker.update_brand_step(
-                instance_id,
-                brand_index=brand_index,
-                brand_name=brand.name,
-                phase="brand_meta",
-                message=f"브랜드 메타 조회 중 ({brand_index}/{len(brands)}): {brand.name}",
-            )
-            brand_meta_url = f"https://{instance.subdomain}.zendesk.com/api/v2/brands/{brand.a_brand_id}"
-            brand_meta_payload = await cls._fetch_json_with_context(
-                url=brand_meta_url,
-                email=instance.email,
-                api_token=instance.api_token,
-                brand_name=brand.name,
-                fetch_step="brand_meta",
-            )
-            brand_meta = brand_meta_payload.get("brand", {})
-            if isinstance(brand_meta, dict):
-                meta_subdomain = brand_meta.get("subdomain")
-                if isinstance(meta_subdomain, str) and meta_subdomain.strip():
-                    brand.subdomain = meta_subdomain.strip()
-                brand.has_help_center = bool(brand_meta.get("has_help_center", brand.has_help_center))
-
-            if not brand.has_help_center:
-                logger.info("브랜드 수집 건너뜀: instance_id=%s, brand=%s, reason=has_help_center=false", instance_id, brand.name)
-                continue
-
-            logger.info("브랜드 수집 시작: instance_id=%s, brand=%s(%s)", instance_id, brand.name, brand.subdomain)
-            summary = FetchBrandSummary(brand_id=brand.id, brand_name=brand.name)
-
-            base_url = f"https://{brand.subdomain}.zendesk.com/api/v2/help_center"
-            categories_url = f"{base_url}/categories.json"
-
-            await FetchProgressTracker.update_brand_step(
-                instance_id,
-                brand_index=brand_index,
-                brand_name=brand.name,
-                phase="categories",
-                message=f"{brand.name} 카테고리 수집 중",
-            )
-            categories_payload = await cls._fetch_json_with_context(
-                url=categories_url,
-                email=instance.email,
-                api_token=instance.api_token,
-                brand_name=brand.name,
-                fetch_step="categories",
-            )
-            category_items = categories_payload.get("categories", [])
-            summary.categories = await cls._sync_categories(
-                session=session,
+            summary = await cls._sync_one_brand(
+                session,
+                instance=instance,
                 instance_id=instance_id,
                 brand=brand,
-                categories=category_items,
-            )
-            brand_category_a_ids = {item["id"] for item in category_items}
-
-            await FetchProgressTracker.update_brand_step(
-                instance_id,
                 brand_index=brand_index,
-                brand_name=brand.name,
-                phase="sections",
-                message=f"{brand.name} 섹션 수집 중",
+                brand_total=brand_total,
             )
-            sections_url = f"{base_url}/sections.json"
-            sections_payload = await cls._fetch_json_with_context(
-                url=sections_url,
-                email=instance.email,
-                api_token=instance.api_token,
-                brand_name=brand.name,
-                fetch_step="sections",
-            )
-            section_items = sections_payload.get("sections", [])
-            summary.sections = await cls._sync_sections(
-                session=session,
-                instance_id=instance_id,
-                brand_category_a_ids=brand_category_a_ids,
-                sections=section_items,
-            )
-            brand_section_a_ids = {item["id"] for item in section_items}
-
-            article_items = await cls._fetch_all_help_center_articles(
-                instance_id=instance_id,
-                brand_index=brand_index,
-                base_url=base_url,
-                email=instance.email,
-                api_token=instance.api_token,
-                brand_name=brand.name,
-            )
-
-            await cls._enrich_articles_with_attachment_flags(
-                instance_id=instance_id,
-                brand_index=brand_index,
-                brand_subdomain=brand.subdomain,
-                email=instance.email,
-                api_token=instance.api_token,
-                brand_name=brand.name,
-                article_items=article_items,
-            )
-
-            await FetchProgressTracker.update_brand_step(
-                instance_id,
-                brand_index=brand_index,
-                brand_name=brand.name,
-                phase="saving",
-                message=f"{brand.name} DB 저장 중 ({len(article_items):,} 아티클)",
-                articles_collected=len(article_items),
-            )
-            summary.articles = await cls._sync_articles(
-                session=session,
-                instance_id=instance_id,
-                brand_subdomain=brand.subdomain,
-                brand_section_a_ids=brand_section_a_ids,
-                articles=article_items,
-            )
-
-            summaries.append(summary)
-            logger.info(
-                "브랜드 수집 완료: instance_id=%s, brand=%s, categories=%s, sections=%s, articles=%s",
-                instance_id,
-                brand.name,
-                summary.categories.total,
-                summary.sections.total,
-                summary.articles.total,
-            )
+            if summary is not None:
+                summaries.append(summary)
 
         instance.last_fetched_at = datetime.now(UTC)
         await session.commit()
@@ -762,6 +878,26 @@ class FetchService:
         tree: list[dict] = []
         for brand in brands:
             brand_categories = categories_by_brand.get(brand.id, [])
+
+            def _articles_for_brand_section(section: Section) -> list[dict]:
+                return [
+                    {
+                        "id": article.id,
+                        "a_id": article.a_id,
+                        "title": article.title,
+                        "draft": article.draft,
+                        "html_url": article.html_url
+                        or cls._build_article_html_url(
+                            brand_subdomain=brand.subdomain,
+                            article_a_id=article.a_id,
+                            locale=article.locale,
+                            draft=article.draft,
+                        ),
+                        "has_attachments": article.has_attachments,
+                    }
+                    for article in articles_by_section_a_id.get(section.a_id, [])
+                ]
+
             brand_node = {
                 "id": brand.id,
                 "a_brand_id": brand.a_brand_id,
@@ -772,37 +908,16 @@ class FetchService:
             }
 
             for category in brand_categories:
+                category_sections = sections_by_category_a_id.get(category.a_id, [])
                 category_node = {
                     "id": category.id,
                     "a_id": category.a_id,
                     "name": category.name,
-                    "sections": [],
+                    "sections": build_nested_section_nodes(
+                        category_sections,
+                        build_articles=_articles_for_brand_section,
+                    ),
                 }
-
-                for section in sections_by_category_a_id.get(category.a_id, []):
-                    section_node = {
-                        "id": section.id,
-                        "a_id": section.a_id,
-                        "name": section.name,
-                        "articles": [
-                            {
-                                "id": article.id,
-                                "a_id": article.a_id,
-                                "title": article.title,
-                                "draft": article.draft,
-                                "html_url": article.html_url
-                                or cls._build_article_html_url(
-                                    brand_subdomain=brand.subdomain,
-                                    article_a_id=article.a_id,
-                                    locale=article.locale,
-                                    draft=article.draft,
-                                ),
-                                "has_attachments": article.has_attachments,
-                            }
-                            for article in articles_by_section_a_id.get(section.a_id, [])
-                        ],
-                    }
-                    category_node["sections"].append(section_node)
 
                 brand_node["categories"].append(category_node)
 

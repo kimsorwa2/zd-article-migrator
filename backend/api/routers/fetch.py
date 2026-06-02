@@ -108,6 +108,8 @@ def _progress_to_response(snapshot) -> FetchSyncProgressResponse:
 
         result=result,
 
+        warnings=snapshot.warnings,
+
     )
 
 
@@ -246,7 +248,37 @@ async def sync_source_instance_data(instance_id: int) -> FetchSyncStartResponse:
 
 
 
-    logger.info("수집 작업 요청 수락: instance_id=%s", instance_id)
+    logger.info("수집 작업 요청 수락: instance_id=%s (전체 브랜드)", instance_id)
+
+    return FetchSyncStartResponse(instance_id=instance_id, status="running")
+
+
+@router.post(
+    "/{instance_id}/brands/{brand_id}/sync",
+    response_model=FetchSyncStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def sync_source_brand_data(instance_id: int, brand_id: int) -> FetchSyncStartResponse:
+    """
+    /**
+     * 선택한 브랜드 한 개만 Help Center 수집을 백그라운드로 시작한다.
+     * @param {int} instance_id 수집할 인스턴스 ID
+     * @param {int} brand_id DB 브랜드 PK (수집 상세 트리의 brand.id)
+     * @returns {FetchSyncStartResponse} 작업 시작 응답
+     */
+    """
+    if FetchProgressTracker.is_running(instance_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="이미 Help Center 수집이 진행 중입니다.",
+        )
+
+    try:
+        start_sync_job(instance_id, brand_id=brand_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+    logger.info("브랜드 단건 수집 요청 수락: instance_id=%s, brand_id=%s", instance_id, brand_id)
 
     return FetchSyncStartResponse(instance_id=instance_id, status="running")
 

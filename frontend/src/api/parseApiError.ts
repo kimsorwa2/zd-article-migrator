@@ -1,3 +1,5 @@
+import type { WorkLogEntry } from "../components/WorkLogAccordion";
+
 /**
  * FastAPI HTTPException 등 API 오류 응답의 detail 필드를 사용자용 문자열로 변환한다.
  * @param payload JSON 파싱된 응답 본문
@@ -9,6 +11,13 @@ export function parseApiErrorDetail(payload: unknown, fallback: string): string 
   }
 
   const detail = (payload as { detail?: unknown }).detail;
+
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim().length > 0) {
+      return message.trim();
+    }
+  }
 
   if (typeof detail === "string" && detail.trim().length > 0) {
     return detail.trim();
@@ -32,4 +41,29 @@ export function parseApiErrorDetail(payload: unknown, fallback: string): string 
   }
 
   return fallback;
+}
+
+/**
+ * API 오류 응답에서 작업 로그 배열을 추출한다.
+ * @param payload JSON 파싱된 응답 본문
+ */
+export function parseApiErrorLogs(payload: unknown): WorkLogEntry[] {
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+
+  const root = payload as { detail?: unknown; logs?: unknown };
+  if (Array.isArray(root.logs)) {
+    return root.logs as WorkLogEntry[];
+  }
+
+  const detail = root.detail;
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const nestedLogs = (detail as { logs?: unknown }).logs;
+    if (Array.isArray(nestedLogs)) {
+      return nestedLogs as WorkLogEntry[];
+    }
+  }
+
+  return [];
 }

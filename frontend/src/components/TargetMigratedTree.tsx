@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ExternalLink, FileText, Folder, Layers, Paperclip, RotateCcw, Store, Trash2 } from "lucide-react";
 import type { FetchDetailBrand, FetchDetailCategory, FetchDetailSection, MigrateOverlayResponse } from "../api/client";
 import { countBrandArticles, countBrandSections, countCategoryArticles } from "../utils/fetchTreeUtils";
+import { NestedSectionTreeNodes, countSectionsForCategory } from "./NestedSectionTreeNodes";
 
 interface TargetMigratedTreeProps {
   title: string;
@@ -306,12 +307,23 @@ export default function TargetMigratedTree({
 
     return (
       <ul className="fetch-tree-children">
-        {category.sections.map((section) => {
-          const articleCount = section.articles.length;
-          const nodeStatus = resolveNodeStatus(overlaySets, "sections", section.a_id);
-          const errorItem = overlaySets.errorByTargetAId.get(section.a_id);
-          return (
-            <li key={section.id} className="fetch-tree-node">
+        <NestedSectionTreeNodes
+          sections={category.sections}
+          level={2}
+          isExpanded={isExpanded}
+          renderSectionNode={(section, level, hasChildren) => {
+            const childCount = section.children?.length ?? 0;
+            const articleCount = section.articles.length;
+            const nodeStatus = resolveNodeStatus(overlaySets, "sections", section.a_id);
+            const errorItem = overlaySets.errorByTargetAId.get(section.a_id);
+            const countParts: string[] = [];
+            if (childCount > 0) {
+              countParts.push(`하위 ${childCount}`);
+            }
+            if (articleCount > 0) {
+              countParts.push(`아티클 ${articleCount}`);
+            }
+            return (
               <MigratedTreeRow
                 showCheckbox
                 showDelete
@@ -320,22 +332,22 @@ export default function TargetMigratedTree({
                 errorHint={errorItem?.error_message ?? undefined}
                 checked={selectedSectionAIds.includes(section.a_id)}
                 label={section.name}
-                level={2}
+                level={level}
                 nodeKey={`section:${section.id}`}
-                hasChildren={articleCount > 0}
+                hasChildren={hasChildren}
                 isExpanded={isExpanded(`section:${section.id}`)}
                 icon={<Layers size={15} />}
-                countLabel={articleCount > 0 ? `아티클 ${articleCount}` : undefined}
+                countLabel={countParts.length > 0 ? countParts.join(" · ") : undefined}
                 isDeleting={isDeleting}
                 onExpandToggle={toggleNode}
                 onCheckChange={(checked) => onToggleSection(section.a_id, checked)}
                 onDelete={() => onDeleteSection(section.a_id)}
                 onRetry={() => errorItem && onRetryDeleteMapping(errorItem.mapping_id)}
               />
-              {renderArticles(section)}
-            </li>
-          );
-        })}
+            );
+          }}
+          renderSectionChildren={(section) => renderArticles(section)}
+        />
       </ul>
     );
   }
@@ -352,7 +364,7 @@ export default function TargetMigratedTree({
     return (
       <ul className="fetch-tree-children">
         {brand.categories.map((category) => {
-          const sectionCount = category.sections.length;
+          const sectionCount = countSectionsForCategory(category);
           const articleCount = countCategoryArticles(category);
           const nodeStatus = resolveNodeStatus(overlaySets, "categories", category.a_id);
           const errorItem = overlaySets.errorByTargetAId.get(category.a_id);

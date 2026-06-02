@@ -37,16 +37,20 @@ class SourceBrandResponse(BaseModel):
     """
     /**
      * 소스 인스턴스의 브랜드 정보를 응답으로 전달한다.
+     * @param {int} id 로컬 브랜드 ID(미리보기 API는 0)
      * @param {int} a_brand_id 소스 Zendesk 브랜드 ID
      * @param {str} name 브랜드 이름
      * @param {str} subdomain 브랜드 서브도메인
+     * @param {bool} has_help_center Help Center 보유 여부
      * @returns {None} 응답 스키마이므로 반환값 없음
      */
     """
 
+    id: int = 0
     a_brand_id: int
     name: str
     subdomain: str
+    has_help_center: bool = True
 
 
 class CreateInstanceRequest(ZendeskCredentialRequest):
@@ -245,6 +249,15 @@ class FetchSyncStartResponse(BaseModel):
     status: str = "running"
 
 
+class FetchSyncWarningItem(BaseModel):
+    """수집 중단 없이 기록된 경고 한 건."""
+
+    timestamp: str
+    phase: str = ""
+    brand_name: str = ""
+    message: str
+
+
 class FetchSyncProgressResponse(BaseModel):
     """
     /**
@@ -281,6 +294,7 @@ class FetchSyncProgressResponse(BaseModel):
     attachments_total: int = 0
     error: str | None = None
     result: FetchSyncResponse | None = None
+    warnings: list[FetchSyncWarningItem] = Field(default_factory=list)
 
 
 class FetchDetailArticleResponse(BaseModel):
@@ -312,15 +326,19 @@ class FetchDetailSectionResponse(BaseModel):
      * @param {int} id 로컬 섹션 ID
      * @param {int} a_id 소스 섹션 A ID
      * @param {str} name 섹션 이름
-     * @param {list[FetchDetailArticleResponse]} articles 하위 아티클 목록
+     * @param {list[FetchDetailArticleResponse]} articles 이 섹션에 직접 속한 아티클
+     * @param {list[FetchDetailSectionResponse]} children 하위 섹션(parent_section_id)
      * @returns {None} 응답 스키마이므로 반환값 없음
      */
     """
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: int
     a_id: int
     name: str
     articles: list[FetchDetailArticleResponse] = Field(default_factory=list)
+    children: list["FetchDetailSectionResponse"] = Field(default_factory=list)
 
 
 class FetchDetailCategoryResponse(BaseModel):
@@ -445,6 +463,9 @@ class MigrateSummaryResponse(BaseModel):
     categories: int
     sections: int
     articles: int
+    scope_categories: int = 0
+    scope_sections: int = 0
+    scope_articles: int = 0
 
 
 class MigrateExecuteResponse(BaseModel):
@@ -488,6 +509,7 @@ class MigrateProgressResponse(BaseModel):
     total_steps: int
     error: str | None = None
     result: MigrateExecuteResponse | None = None
+    logs: list[str] = Field(default_factory=list)
 
 
 class MigrateOverlayItemResponse(BaseModel):
@@ -602,6 +624,35 @@ class MigrateTreeBrandResponse(BaseModel):
     categories: list[MigrateTreeCategoryResponse] = Field(default_factory=list)
 
 
+class MigrateTargetTreeResponse(BaseModel):
+    """
+    /**
+     * 마이그레이션으로 생성·저장된 타겟 Help Center 트리 응답.
+     * FetchDetailResponse와 동일한 brands 구조를 사용해 프론트 트리 컴포넌트를 재사용한다.
+     */
+    """
+
+    source_instance_id: int
+    target_instance_id: int
+    instance_id: int
+    instance_name: str
+    summary: FetchDetailSummaryResponse
+    brands: list[FetchDetailBrandResponse] = Field(default_factory=list)
+    mapping_record_count: int = 0
+
+
+class MigrateClearMappingsResponse(BaseModel):
+    """
+    /**
+     * 소스·타겟 쌍의 migration_mappings 삭제 결과.
+     */
+    """
+
+    source_instance_id: int
+    target_instance_id: int
+    deleted_count: int
+
+
 class MigrateTreeResponse(BaseModel):
     """
     /**
@@ -703,3 +754,240 @@ class DeleteRetryRequest(BaseModel):
         default_factory=list,
         description="비어 있으면 해당 인스턴스 쌍의 delete_error 전체를 재시도한다.",
     )
+
+
+class AiOcrModelOptionResponse(BaseModel):
+    """Vision 모델 셀렉트 옵션."""
+
+    value: str
+    label: str
+
+
+class AiOcrModelOptionsResponse(BaseModel):
+    """제공자별 선택 가능한 Vision 모델 목록."""
+
+    gemini: list[AiOcrModelOptionResponse] = Field(default_factory=list)
+    openai: list[AiOcrModelOptionResponse] = Field(default_factory=list)
+    defaults: dict[str, str] = Field(default_factory=dict)
+
+
+class AiOcrProviderConfigResponse(BaseModel):
+    """AI 제공자별 계정·키·모델 요약."""
+
+    account: str | None = None
+    has_api_key: bool = False
+    api_key_masked: str | None = None
+    model: str
+
+
+class AiOcrPromptTemplateResponse(BaseModel):
+    """저장된 OCR Vision 프롬프트 템플릿."""
+
+    id: int
+    name: str
+    description: str | None = None
+    system_prompt: str
+    user_prompt: str
+    is_builtin: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
+class AiOcrSettingsResponse(BaseModel):
+    """AI-OCR 설정 응답."""
+
+    active_provider: Literal["gemini", "openai"]
+    active_prompt_id: int | None = None
+    gemini: AiOcrProviderConfigResponse
+    openai: AiOcrProviderConfigResponse
+    prompt_templates: list[AiOcrPromptTemplateResponse] = Field(default_factory=list)
+    default_system_prompt: str
+    default_user_prompt: str
+
+
+class AiOcrSettingsUpdateRequest(BaseModel):
+    """AI-OCR 설정 저장 요청."""
+
+    active_provider: Literal["gemini", "openai"] | None = None
+    active_prompt_id: int | None = Field(default=None, description="OCR 분석에 사용할 프롬프트 템플릿 ID")
+    gemini_account: str | None = Field(default=None, max_length=255)
+    gemini_api_key: str | None = Field(
+        default=None,
+        max_length=512,
+        description="비우면 기존 Gemini 키 유지",
+    )
+    openai_account: str | None = Field(default=None, max_length=255)
+    openai_api_key: str | None = Field(
+        default=None,
+        max_length=512,
+        description="비우면 기존 OpenAI 키 유지",
+    )
+    gemini_model: str | None = Field(default=None, max_length=64, description="Gemini Vision 모델 ID")
+    openai_model: str | None = Field(default=None, max_length=64, description="OpenAI Vision 모델 ID")
+
+
+class AiOcrPromptTemplateCreateRequest(BaseModel):
+    """프롬프트 템플릿 생성 요청."""
+
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    system_prompt: str = Field(min_length=1)
+    user_prompt: str = Field(min_length=1)
+    set_active: bool = Field(default=False, description="생성 후 OCR 활성 프롬프트로 지정")
+
+
+class AiOcrPromptTemplateUpdateRequest(BaseModel):
+    """프롬프트 템플릿 수정 요청."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    system_prompt: str | None = Field(default=None, min_length=1)
+    user_prompt: str | None = Field(default=None, min_length=1)
+
+
+class AiOcrLogEntryResponse(BaseModel):
+    """AI-OCR 작업 로그 한 건."""
+
+    timestamp: str
+    level: Literal["info", "error", "success"]
+    summary: str
+    body: str
+
+
+class AiOcrAnalyzeResponse(BaseModel):
+    """이미지 OCR 분석 결과."""
+
+    history_id: int
+    title: str
+    html_body: str
+    label_names: list[str]
+    detected_product: str
+    maintenance_cycle: str | None = None
+    body_preview_text: str
+    logs: list[AiOcrLogEntryResponse] = Field(default_factory=list)
+
+
+class AiOcrAnalysisHistoryItem(BaseModel):
+    """저장된 OCR 분석 이력 한 건."""
+
+    id: int
+    label: str
+    source_filename: str
+    title: str
+    html_body: str
+    label_names: list[str]
+    detected_product: str
+    maintenance_cycle: str | None = None
+    body_preview_text: str
+    created_at: datetime
+
+
+class AiOcrAnalysisHistoryListResponse(BaseModel):
+    """OCR 분석 이력 목록."""
+
+    items: list[AiOcrAnalysisHistoryItem] = Field(default_factory=list)
+
+
+class AiOcrCreateArticleRequest(BaseModel):
+    """Zendesk 아티클 생성 요청."""
+
+    instance_id: int
+    brand_id: int
+    section_a_id: int
+    title: str = Field(min_length=1, max_length=500)
+    html_body: str = Field(min_length=1)
+    label_names: list[str] = Field(default_factory=list)
+    locale: str = Field(default="ko", max_length=20)
+    draft: bool = False
+
+
+class AiOcrCreateArticleResponse(BaseModel):
+    """Zendesk 아티클 생성 결과."""
+
+    article_id: int
+    html_url: str | None = None
+    section_a_id: int
+    section_name: str
+    logs: list[AiOcrLogEntryResponse] = Field(default_factory=list)
+
+
+class ImageConvertArticleItem(BaseModel):
+    """이미지 포함 소스 아티클 목록 항목."""
+
+    id: int
+    a_id: int
+    title: str
+    html_url: str | None = None
+    section_name: str
+    image_count: int
+    label_names: list[str] = Field(default_factory=list)
+
+
+class ImageConvertArticleListResponse(BaseModel):
+    """이미지 포함 소스 아티클 목록."""
+
+    items: list[ImageConvertArticleItem] = Field(default_factory=list)
+
+
+class ImageConvertArticleImageItem(BaseModel):
+    """아티클 본문 이미지 한 건."""
+
+    index: int
+    source_url: str
+    filename: str
+    availability: str = Field(
+        default="unknown",
+        description="ok=API 다운로드 가능, external_paste=타 Zendesk 붙여넣기, unknown=미확인",
+    )
+    availability_reason: str | None = None
+
+
+class ImageConvertArticleDetailResponse(BaseModel):
+    """소스 아티클 상세."""
+
+    id: int
+    a_id: int
+    title: str
+    html_url: str | None = None
+    section_name: str
+    label_names: list[str] = Field(default_factory=list)
+    body: str | None = None
+    images: list[ImageConvertArticleImageItem] = Field(default_factory=list)
+    brand_subdomain: str
+
+
+class ImageConvertAnalyzeRequest(BaseModel):
+    """소스 아티클 OCR 변환 요청."""
+
+    source_instance_id: int
+    article_id: int
+
+
+class ImageConvertImagePreviewItem(BaseModel):
+    """OCR 분석에 사용된 이미지 미리보기."""
+
+    index: int
+    filename: str
+    preview_data_url: str
+
+
+class ImageConvertAnalyzeResponse(BaseModel):
+    """소스 아티클 OCR 변환 결과."""
+
+    history_id: int
+    source_article_id: int
+    source_article_a_id: int
+    source_article_title: str
+    title: str
+    html_body: str
+    label_names: list[str] = Field(default_factory=list)
+    detected_product: str
+    maintenance_cycle: str | None = None
+    body_preview_text: str
+    image_count: int
+    ocr_image_count: int
+    image_previews: list[ImageConvertImagePreviewItem] = Field(default_factory=list)
+    logs: list[AiOcrLogEntryResponse] = Field(default_factory=list)
+
+
+FetchDetailSectionResponse.model_rebuild()

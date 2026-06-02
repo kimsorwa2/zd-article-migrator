@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import { Database, Rocket } from "lucide-react";
 import { apiClient, type Instance } from "./api/client";
+import AppSidebar, { type AppRouteKey } from "./components/AppSidebar";
+import AiOcrPage from "./pages/AiOcrPage";
 import InstancesPage from "./pages/InstancesPage";
 import MigratePage from "./pages/MigratePage";
-
-type TabKey = "instances" | "migrate";
+import AiSettingsPage from "./pages/AiSettingsPage";
+import ConvertImagePage from "./pages/ConvertImagePage";
+import PlaceholderPage from "./pages/PlaceholderPage";
 
 export default function App() {
-  const [tab, setTab] = useState<TabKey>("instances");
+  const [route, setRoute] = useState<AppRouteKey>("instances");
   const [instances, setInstances] = useState<Instance[]>([]);
 
   useEffect(() => {
@@ -20,41 +22,36 @@ export default function App() {
       }
     }
     void loadInstances();
-  }, [tab]);
+  }, [route]);
+
+  function renderContent() {
+    switch (route) {
+      case "instances":
+        return <InstancesPage />;
+      case "ai-settings":
+        return <AiSettingsPage />;
+      case "migrate-file":
+        return (
+          <PlaceholderPage
+            title="파일로 아티클 이관"
+            description="CSV·JSON 등 파일을 업로드해 Zendesk 아티클로 일괄 등록합니다."
+          />
+        );
+      case "migrate-instance":
+        return <MigratePage instances={instances} />;
+      case "create-image":
+        return <AiOcrPage instances={instances} />;
+      case "convert-image":
+        return <ConvertImagePage instances={instances} />;
+      default:
+        return <InstancesPage />;
+    }
+  }
 
   return (
-    <main className="app">
-      <div className="layout">
-        <aside className="sidebar">
-          <p className="kicker">Zendesk Article Migration Console</p>
-          <h1 className="sidebar-title">
-            <span className="sidebar-title-line">젠데스크 아티클</span>
-            <span className="sidebar-title-line">마이그레이션</span>
-          </h1>
-          <nav className="sidebar-nav">
-            <button type="button" className={tab === "instances" ? "active-tab" : ""} onClick={() => setTab("instances")}>
-              <Database className="menu-icon" size={16} aria-hidden="true" />
-              인스턴스 관리
-            </button>
-            <button type="button" className={tab === "migrate" ? "active-tab" : ""} onClick={() => setTab("migrate")}>
-              <Rocket className="menu-icon" size={16} aria-hidden="true" />
-              마이그레이션
-            </button>
-          </nav>
-          <div className="sidebar-footer">
-            <p className="sidebar-footer-label">Developer</p>
-            <p className="sidebar-footer-name">Sora Kim</p>
-            <a className="sidebar-footer-email" href="mailto:kimsorwa@gmail.com">
-              kimsorwa@gmail.com
-            </a>
-          </div>
-        </aside>
-
-        <section className="content">
-          {tab === "instances" ? <InstancesPage /> : null}
-          {tab === "migrate" ? <MigratePage instances={instances} /> : null}
-        </section>
-      </div>
-    </main>
+    <div className="app-shell">
+      <AppSidebar activeRoute={route} onNavigate={setRoute} />
+      <main className="app-main">{renderContent()}</main>
+    </div>
   );
 }

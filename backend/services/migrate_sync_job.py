@@ -22,6 +22,9 @@ def _summary_to_result(source_instance_id: int, target_instance_id: int, summary
             "categories": summary.categories,
             "sections": summary.sections,
             "articles": summary.articles,
+            "scope_categories": summary.scope_categories,
+            "scope_sections": summary.scope_sections,
+            "scope_articles": summary.scope_articles,
         },
     }
 
