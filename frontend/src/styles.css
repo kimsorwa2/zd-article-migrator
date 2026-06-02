@@ -39,6 +39,7 @@ body {
 
 .app-shell {
   display: flex;
+  width: 100%;
   min-height: 100vh;
   background: var(--color-bg);
 }
@@ -240,9 +241,12 @@ body {
 .app-main {
   margin-left: var(--sidebar-width);
   flex: 1;
+  width: calc(100vw - var(--sidebar-width));
+  max-width: calc(100vw - var(--sidebar-width));
   min-width: 0;
   min-height: 100vh;
   padding: 28px 32px 40px;
+  box-sizing: border-box;
 }
 
 .page {
@@ -250,7 +254,7 @@ body {
   flex-direction: column;
   gap: 20px;
   width: 100%;
-  max-width: 1280px;
+  max-width: none;
 }
 
 .page-top {
@@ -427,6 +431,23 @@ body {
 .instance-list-row-main {
   flex: 1;
   min-width: 0;
+}
+
+/* 인스턴스 선택 영역(버튼 중첩 방지 — 행 전체가 아닌 이 영역만 클릭) */
+.instance-list-row-select {
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.instance-list-row-select:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .instance-list-row-main strong {
@@ -1978,6 +1999,8 @@ button:disabled {
 
   .app-main {
     margin-left: 0;
+    width: 100%;
+    max-width: 100%;
     padding: 20px 16px 32px;
   }
 
@@ -2156,7 +2179,8 @@ button:disabled {
 
 /* AI 설정 상세 페이지 */
 .ai-settings-page {
-  max-width: 1200px;
+  max-width: none;
+  width: 100%;
 }
 
 .ai-settings-grid {

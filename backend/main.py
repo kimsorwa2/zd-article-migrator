@@ -1,23 +1,47 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers import ai_ocr, delete, fetch, image_convert, instances, migrate
+from db.database import dispose_engine_pool
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
     datefmt="%H:%M:%S",
 )
-for logger_name in ("services", "services.fetch_service", "services.fetch_progress", "services.fetch_sync_job"):
+for logger_name in (
+    "services",
+    "services.fetch_service",
+    "services.fetch_progress",
+    "services.fetch_sync_job",
+    "services.ai_connection_test",
+    "services.bedrock_runtime",
+    "services.ai_ocr_service",
+    "api.routers.ai_ocr",
+):
     logging.getLogger(logger_name).setLevel(logging.INFO)
+
+@asynccontextmanager
+async def app_lifespan(_app: FastAPI):
+    """
+    /**
+     * 기동·종료 시 DB 연결 풀을 비워 stale asyncpg 캐시를 제거한다.
+     */
+    """
+    await dispose_engine_pool()
+    yield
+    await dispose_engine_pool()
+
 
 app = FastAPI(
     title="zd-article-migrator",
     description="Zendesk 아티클 마이그레이션 백엔드 API",
     version="0.1.0",
+    lifespan=app_lifespan,
 )
 
 

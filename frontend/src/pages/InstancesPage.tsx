@@ -365,52 +365,72 @@ export default function InstancesPage() {
           {isLoading ? <LoadingPanel message="인스턴스 리스트를 불러오는 중..." /> : null}
           {!isLoading && instances.length === 0 ? <p className="muted">등록된 인스턴스가 없습니다.</p> : null}
           <div className="instance-list">
-            {instances.map((instance) => (
-              <button
-                key={instance.id}
-                type="button"
-                className={`instance-list-row${selectedInstanceId === instance.id ? " is-selected" : ""}`}
-                onClick={() => setSelectedInstanceId(instance.id)}
-              >
-                <div className="instance-list-row-main">
-                  <div className="instance-list-row-title">
-                    <strong>{instance.name}</strong>
-                    <StatusBadge active={instance.is_active} />
+            {instances.map((instance) => {
+              const isSelected = selectedInstanceId === instance.id;
+              return (
+                <div
+                  key={instance.id}
+                  className={`instance-list-row${isSelected ? " is-selected" : ""}`}
+                >
+                  <div
+                    className="instance-list-row-main instance-list-row-select"
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isSelected}
+                    aria-label={`${instance.name} 선택`}
+                    onClick={() => setSelectedInstanceId(instance.id)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") {
+                        return;
+                      }
+                      event.preventDefault();
+                      setSelectedInstanceId(instance.id);
+                    }}
+                  >
+                    <div className="instance-list-row-title">
+                      <strong>{instance.name}</strong>
+                      <StatusBadge active={instance.is_active} />
+                    </div>
+                    <p className="muted">{instance.subdomain}</p>
+                    <p className="muted instance-list-meta">
+                      마지막 수집: {formatFetchedAt(instance.last_fetched_at)}
+                    </p>
                   </div>
-                  <p className="muted">{instance.subdomain}</p>
-                  <p className="muted instance-list-meta">마지막 수집: {formatFetchedAt(instance.last_fetched_at)}</p>
-                </div>
-                <div className="instance-list-row-actions" onClick={(event) => event.stopPropagation()}>
-                  <div className="instance-list-row-actions-group">
+                  <div className="instance-list-row-actions">
+                    <div className="instance-list-row-actions-group">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditFormError("");
+                          setEditingInstance(instance);
+                        }}
+                      >
+                        <Pencil size={14} aria-hidden="true" /> 편집
+                      </button>
+                      <button type="button" onClick={() => void handleTestConnection(instance.id)}>
+                        연결 테스트
+                      </button>
+                      <button type="button" onClick={() => void handleToggleActive(instance)}>
+                        {instance.is_active ? "비활성화" : "활성화"}
+                      </button>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => {
-                        setEditFormError("");
-                        setEditingInstance(instance);
-                      }}
+                      className="instance-list-delete-btn"
+                      title="인스턴스 삭제"
+                      aria-label={`${instance.name} 삭제`}
+                      disabled={
+                        deletingInstanceId === instance.id ||
+                        (isSyncing && selectedInstanceId === instance.id)
+                      }
+                      onClick={() => void handleDeleteInstance(instance)}
                     >
-                      <Pencil size={14} aria-hidden="true" /> 편집
-                    </button>
-                    <button type="button" onClick={() => void handleTestConnection(instance.id)}>
-                      연결 테스트
-                    </button>
-                    <button type="button" onClick={() => void handleToggleActive(instance)}>
-                      {instance.is_active ? "비활성화" : "활성화"}
+                      <Trash2 size={16} aria-hidden="true" />
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    className="instance-list-delete-btn"
-                    title="인스턴스 삭제"
-                    aria-label={`${instance.name} 삭제`}
-                    disabled={deletingInstanceId === instance.id || (isSyncing && selectedInstanceId === instance.id)}
-                    onClick={() => void handleDeleteInstance(instance)}
-                  >
-                    <Trash2 size={16} aria-hidden="true" />
-                  </button>
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         </div>
 

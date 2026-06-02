@@ -1,5 +1,4 @@
-import type { AiOcrSettings } from "../api/client";
-import { AI_PROVIDER_OPTIONS } from "../components/AiOcrSettingsModal";
+import type { AiOcrConnection, AiOcrSettings } from "../api/client";
 
 /** 분석 AI 제공자 상태 표시용 */
 export interface AiProviderStatusDisplay {
@@ -11,6 +10,21 @@ export interface AiProviderStatusDisplay {
   ready: boolean;
   modelId: string | null;
   promptName: string | null;
+}
+
+/**
+ * 활성 연동 프로필을 반환한다.
+ * @param aiSettings 서버 설정
+ */
+export function resolveActiveConnection(aiSettings: AiOcrSettings): AiOcrConnection | null {
+  if (aiSettings.active_connection_id == null) {
+    return aiSettings.connections.find((item) => item.is_active) ?? aiSettings.connections[0] ?? null;
+  }
+  return (
+    aiSettings.connections.find((item) => item.id === aiSettings.active_connection_id) ??
+    aiSettings.connections[0] ??
+    null
+  );
 }
 
 /**
@@ -32,25 +46,29 @@ export function buildAiProviderStatusDisplay(
     };
   }
 
-  const label =
-    AI_PROVIDER_OPTIONS.find((option) => option.value === aiSettings.active_provider)?.label ?? "—";
-  const ready =
-    aiSettings.active_provider === "openai"
-      ? aiSettings.openai.has_api_key
-      : aiSettings.gemini.has_api_key;
-  const modelId =
-    aiSettings.active_provider === "openai" ? aiSettings.openai.model : aiSettings.gemini.model;
+  const active = resolveActiveConnection(aiSettings);
+  if (!active) {
+    return {
+      text: "AI 연동이 없습니다 — AI 설정에서 연동을 추가하세요",
+      warn: true,
+      ready: false,
+      modelId: null,
+      promptName: null,
+    };
+  }
+
+  const ready = active.has_api_key;
   const promptName = aiSettings.active_prompt_id
     ? (aiSettings.prompt_templates.find((item) => item.id === aiSettings.active_prompt_id)?.name ?? null)
     : null;
 
   return {
     text: ready
-      ? `${label} API 키 설정됨`
-      : `${label} API 키 미설정 — AI 설정 메뉴에서 키를 저장하세요`,
+      ? `${active.label} — API 키 설정됨`
+      : `${active.label} — API 키 미설정`,
     warn: !ready,
     ready,
-    modelId,
+    modelId: active.model,
     promptName,
   };
 }

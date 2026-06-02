@@ -614,12 +614,14 @@ class ImageConvertService:
             raise AiOcrServiceError(message, log)
 
         try:
-            provider, api_key, model_id = await AiOcrService._require_active_vision_config(session)
+            provider, api_key, model_id, api_secret, aws_region = await AiOcrService._require_active_vision_config(
+                session
+            )
         except ValueError as error:
             log.error("설정 오류", str(error))
             raise AiOcrServiceError(str(error), log) from error
 
-        system_prompt, user_prompt = await AiOcrService._get_resolved_prompts(session)
+        system_prompt, user_prompt, _prompt_template_id = await AiOcrService._get_resolved_prompts(session)
         known_subdomains = await cls._get_known_subdomains(session, source_instance_id)
         attachment_meta = await cls._load_attachment_meta(
             instance=instance,
@@ -689,6 +691,8 @@ class ImageConvertService:
                     provider=provider,  # type: ignore[arg-type]
                     api_key=api_key,
                     model=model_id,
+                    api_secret=api_secret,
+                    aws_region=aws_region,
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     log=log,

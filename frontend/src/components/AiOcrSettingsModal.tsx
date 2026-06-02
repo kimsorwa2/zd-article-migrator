@@ -14,6 +14,7 @@ interface AiOcrSettingsModalProps {
 export const AI_PROVIDER_OPTIONS: Array<{ value: AiOcrProvider; label: string }> = [
   { value: "gemini", label: "Google Gemini" },
   { value: "openai", label: "ChatGPT (OpenAI)" },
+  { value: "bedrock", label: "AWS Bedrock" },
 ];
 
 /**

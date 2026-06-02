@@ -1,7 +1,9 @@
 import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeftRight,
+  BarChart2,
   Bot,
+  MessageSquareText,
   FileUp,
   Layers3,
   RefreshCw,
@@ -13,6 +15,8 @@ import {
 export type AppRouteKey =
   | "instances"
   | "ai-settings"
+  | "ai-prompts"
+  | "ai-ocr-monitor"
   | "migrate-file"
   | "migrate-instance"
   | "create-image"
@@ -41,6 +45,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "instances", label: "인스턴스 관리", icon: Server },
       { id: "ai-settings", label: "AI 설정", icon: Bot },
+      { id: "ai-prompts", label: "프롬프트 관리", icon: MessageSquareText },
+      { id: "ai-ocr-monitor", label: "AI 호출 이력", icon: BarChart2 },
     ],
   },
   {
@@ -121,6 +127,8 @@ export default function AppSidebar({ activeRoute, onNavigate }: AppSidebarProps)
 export const ROUTE_TITLES: Record<AppRouteKey, string> = {
   instances: "인스턴스 관리",
   "ai-settings": "AI 설정",
+  "ai-prompts": "프롬프트 관리",
+  "ai-ocr-monitor": "AI 호출 이력",
   "migrate-file": "파일로 아티클 이관",
   "migrate-instance": "인스턴스 간 이관",
   "create-image": "이미지로 아티클 생성",

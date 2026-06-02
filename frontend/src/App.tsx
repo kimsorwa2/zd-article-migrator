@@ -5,6 +5,8 @@ import AiOcrPage from "./pages/AiOcrPage";
 import InstancesPage from "./pages/InstancesPage";
 import MigratePage from "./pages/MigratePage";
 import AiSettingsPage from "./pages/AiSettingsPage";
+import AiPromptManagePage from "./pages/AiPromptManagePage";
+import AiOcrMonitorPage from "./pages/AiOcrMonitorPage";
 import ConvertImagePage from "./pages/ConvertImagePage";
 import PlaceholderPage from "./pages/PlaceholderPage";
 
@@ -30,6 +32,10 @@ export default function App() {
         return <InstancesPage />;
       case "ai-settings":
         return <AiSettingsPage />;
+      case "ai-prompts":
+        return <AiPromptManagePage />;
+      case "ai-ocr-monitor":
+        return <AiOcrMonitorPage />;
       case "migrate-file":
         return (
           <PlaceholderPage

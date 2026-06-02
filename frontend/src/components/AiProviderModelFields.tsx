@@ -67,18 +67,22 @@ export default function AiProviderModelFields({
           placeholder={
             savedConfig?.has_api_key
               ? "변경할 때만 입력 (비우면 유지)"
-              : provider === "gemini"
-                ? "AIza..."
-                : "sk-..."
+              : provider === "bedrock"
+                ? "Bedrock 콘솔 API 키"
+                : provider === "gemini"
+                  ? "AIza..."
+                  : "sk-..."
           }
           autoComplete="off"
         />
       </label>
 
       <p className="muted ai-ocr-settings-hint">
-        {provider === "gemini"
-          ? "Google AI Studio에서 발급한 API 키를 입력하세요."
-          : "OpenAI Platform에서 발급한 API 키를 입력하세요."}
+        {provider === "bedrock"
+          ? "Amazon Bedrock 콘솔 → API keys에서 생성한 Bedrock API 키를 입력하세요. (Bearer 방식, IAM Access Key 불필요)"
+          : provider === "gemini"
+            ? "Google AI Studio에서 발급한 API 키를 입력하세요."
+            : "OpenAI Platform에서 발급한 API 키를 입력하세요."}
       </p>
 
       {savedConfig?.api_key_masked ? (

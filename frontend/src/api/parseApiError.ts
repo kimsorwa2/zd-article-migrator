@@ -30,6 +30,12 @@ export function parseApiErrorDetail(payload: unknown, fallback: string): string 
           return item;
         }
         if (item && typeof item === "object" && "msg" in item && typeof item.msg === "string") {
+          const loc = "loc" in item && Array.isArray(item.loc)
+            ? item.loc.filter((segment: unknown) => segment !== "body").join(".")
+            : "";
+          if (loc) {
+            return `${loc}: ${item.msg}`;
+          }
           return item.msg;
         }
         return "";

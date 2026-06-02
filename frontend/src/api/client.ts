@@ -237,7 +237,34 @@ export interface DeleteFailedItem {
   error_message: string;
 }
 
-export type AiOcrProvider = "gemini" | "openai";
+export type AiOcrProvider = "gemini" | "openai" | "bedrock";
+
+/** AI 연동 연결 테스트 API 응답 */
+export interface AiOcrConnectionTestResult {
+  success: boolean;
+  message: string;
+  provider: AiOcrProvider;
+  model: string;
+  latency_ms: number | null;
+}
+
+export interface AiOcrConnection {
+  id: number;
+  provider: AiOcrProvider;
+  model: string;
+  account: string | null;
+  has_api_key: boolean;
+  api_key_masked: string | null;
+  has_api_secret: boolean;
+  api_secret_masked: string | null;
+  aws_region: string | null;
+  label: string;
+  is_active: boolean;
+  prompt_template_id: number | null;
+  prompt_template_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface AiOcrProviderConfig {
   account: string | null;
@@ -259,7 +286,9 @@ export interface AiOcrPromptTemplate {
 
 export interface AiOcrSettings {
   active_provider: AiOcrProvider;
+  active_connection_id: number | null;
   active_prompt_id: number | null;
+  connections: AiOcrConnection[];
   gemini: AiOcrProviderConfig;
   openai: AiOcrProviderConfig;
   prompt_templates: AiOcrPromptTemplate[];
@@ -281,6 +310,8 @@ export interface AiOcrAnalyzeResult {
 export interface AiOcrAnalysisHistoryItem {
   id: number;
   label: string;
+  display_label?: string | null;
+  ai_model?: string | null;
   source_filename: string;
   title: string;
   html_body: string;
@@ -288,6 +319,20 @@ export interface AiOcrAnalysisHistoryItem {
   detected_product: string;
   maintenance_cycle: string | null;
   body_preview_text: string;
+  prompt_template_id?: number | null;
+  image_size_kb?: number | null;
+  latency_ms?: number | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  thinking_tokens?: number | null;
+  total_tokens?: number | null;
+  finish_reason?: string | null;
+  parse_success?: boolean | null;
+  experiment_tag?: string | null;
+  raw_response_text?: string | null;
+  parse_error_message?: string | null;
+  used_system_prompt?: string | null;
+  used_user_prompt?: string | null;
   created_at: string;
 }
 
@@ -558,8 +603,13 @@ export const apiClient = {
   getAiOcrSettings: () => request<AiOcrSettings>("/ai-ocr/settings"),
   getAiOcrHistory: () =>
     request<{ items: AiOcrAnalysisHistoryItem[] }>("/ai-ocr/history"),
+  listAiOcrHistoryMetrics: (limit = 100) =>
+    request<{ items: AiOcrAnalysisHistoryItem[] }>(
+      `/ai-ocr/history/metrics?limit=${encodeURIComponent(String(limit))}`,
+    ),
   updateAiOcrSettings: (payload: {
     active_provider?: AiOcrProvider;
+    active_connection_id?: number | null;
     active_prompt_id?: number | null;
     gemini_account?: string | null;
     gemini_api_key?: string | null;
@@ -571,6 +621,45 @@ export const apiClient = {
     request<AiOcrSettings>("/ai-ocr/settings", {
       method: "PUT",
       body: JSON.stringify(payload),
+    }),
+  createAiOcrConnection: (payload: {
+    provider: AiOcrProvider;
+    model: string;
+    account?: string | null;
+    api_key?: string | null;
+    api_secret?: string | null;
+    aws_region?: string | null;
+    prompt_template_id?: number | null;
+    set_active?: boolean;
+  }) =>
+    request<AiOcrConnection>("/ai-ocr/connections", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateAiOcrConnection: (
+    connectionId: number,
+    payload: {
+      model?: string;
+      account?: string | null;
+      api_key?: string | null;
+      api_secret?: string | null;
+      aws_region?: string | null;
+      prompt_template_id?: number | null;
+    },
+  ) =>
+    request<AiOcrConnection>(`/ai-ocr/connections/${connectionId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  deleteAiOcrConnection: (connectionId: number) =>
+    request<void>(`/ai-ocr/connections/${connectionId}`, { method: "DELETE" }),
+  activateAiOcrConnection: (connectionId: number) =>
+    request<AiOcrSettings>(`/ai-ocr/connections/${connectionId}/activate`, {
+      method: "PUT",
+    }),
+  testAiOcrConnection: (connectionId: number) =>
+    request<AiOcrConnectionTestResult>(`/ai-ocr/connections/${connectionId}/test`, {
+      method: "POST",
     }),
   createAiOcrPrompt: (payload: {
     name: string;

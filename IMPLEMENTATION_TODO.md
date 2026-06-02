@@ -16,7 +16,7 @@ python -m alembic upgrade head
 python -m alembic current
 ```
 
-- `upgrade head`: 최신 마이그레이션까지 DB 스키마 반영 (현재 head: `0013_ai_ocr_prompt_templates`)
+- `upgrade head`: 최신 마이그레이션까지 DB 스키마 반영 (현재 head: `0020_ai_ocr_connection_prompt`)
 - `current`: 현재 DB에 반영된 리비전 확인
 - 참고: PowerShell에서 `alembic` 명령이 안 잡히면 `python -m alembic ...` 형태를 사용
 
@@ -51,9 +51,9 @@ npm run dev
 - [x] `frontend/package.json`, `frontend/vite.config.ts` 작성
 - [x] `backend/db/models.py` 모델 정의
   - [x] `instances`, `brands`, `categories`, `sections`, `articles`, `migration_mappings`
-  - [x] AI OCR: `ai_ocr_settings`, `ai_ocr_analysis_history`, `ai_ocr_prompt_templates` (Alembic 0007~0013)
+  - [x] AI OCR: `ai_ocr_settings`, `ai_ocr_connections`, `ai_ocr_analysis_history`, `ai_ocr_prompt_templates` (Alembic 0007~0019)
 - [x] `backend/db/database.py` 비동기 DB 연결 설정
-- [x] Alembic 초기 구성 + 리비전 `0001` ~ `0013`
+- [x] Alembic 초기 구성 + 리비전 `0001` ~ `0020`
 - [x] `backend/main.py` FastAPI 기본 설정 + 라우터 등록
 - [x] `backend/.env.example` 작성
 - [x] Neon 연결 및 `alembic current` 정상 확인
@@ -153,15 +153,20 @@ npm run dev
 ## 8) AI OCR — 이미지로 아티클 생성
 
 - [x] `api/routers/ai_ocr.py`
-  - [x] `GET/PUT /api/ai-ocr/settings` (OpenAI / Gemini, 활성 제공자)
+  - [x] `GET /api/ai-ocr/model-options`
+  - [x] `GET/PUT /api/ai-ocr/settings` (활성 제공자·연동·프롬프트)
+  - [x] AI 연동 CRUD·테스트·활성화 (`/api/ai-ocr/connections`)
   - [x] 프롬프트 템플릿 CRUD (`/api/ai-ocr/prompts`)
   - [x] `POST /api/ai-ocr/analyze` (이미지 업로드 → HTML 초안)
   - [x] `POST /api/ai-ocr/create-article` (기본 locale `ko`)
-  - [x] `GET /api/ai-ocr/history` (이전 분석 이력)
-- [x] `services/ai_ocr_service.py`, `services/article_from_image.py` (Gemini 2.5 Pro 등)
-- [x] 프론트: `AiOcrPage`, `AiSettingsPage`, `AiOcrSettingsModal`, `AiOcrHtmlPreview`
+  - [x] `GET /api/ai-ocr/history`, `GET /api/ai-ocr/history/metrics`
+- [x] `services/ai_ocr_service.py`, `services/article_from_image.py` (Gemini / OpenAI / Bedrock Vision)
+- [x] `services/bedrock_runtime.py` (Converse API, Bearer httpx)
+- [x] `services/ai_connection_test.py` (연동별 연결 테스트)
+- [x] 프론트: `AiOcrPage`, `AiSettingsPage`, `AiOcrConnectionModal`, `AiOcrMonitorPage`, `AiOcrHtmlPreview`
 - [x] 분석 중 「이전 분석 결과」 비활성화 + 미리보기 `AiOcrCuteSpinner`
 - [x] `WorkLogAccordion` API 작업 로그
+- [x] Bedrock 모델 ID → 리전별 inference profile 자동 변환 (`resolve_bedrock_model`)
 
 ---
 
@@ -182,7 +187,9 @@ npm run dev
 - [x] Vite React + `AppSidebar` (인스턴스 / AI 설정 / 이관 / 아티클 생성 메뉴)
 - [x] `src/api/client.ts` (수집·마이그레이션·삭제·AI OCR·이미지 변환)
 - [x] `src/utils/syncProgressPoll.ts`, `fetchTreeSelection.ts`, `instanceUtils.ts`, `parseApiError.ts`
-- [x] 페이지: `InstancesPage`, `MigratePage`, `AiOcrPage`, `ConvertImagePage`, `AiSettingsPage`
+- [x] 페이지: `InstancesPage`, `MigratePage`, `AiOcrPage`, `ConvertImagePage`, `AiSettingsPage`, `AiPromptManagePage`, `AiOcrMonitorPage`
+- [x] 프롬프트 관리 메뉴 분리, AI 설정 연동별 `prompt_template_id` 셀렉트 (Alembic 0020)
+- [x] AI 호출 이력 토큰 메트릭 공통화 (`ai_usage_metrics.py`)
 - [x] 컴포넌트: `FetchDataTree`, `SelectableSourceTree`, `TargetMigratedTree`, `SyncProgressPanel`, `MigrateProgressPanel`, `CategorySectionPickerModal`, `NestedSectionTreeNodes` 등
 - [x] `MigratePage` UX (진행률, 오버레이, 삭제·재시도, 타겟 자동 재수집 체크박스)
 - [ ] `PlaceholderPage` — **파일로 아티클 이관** 실제 구현
@@ -195,13 +202,14 @@ npm run dev
 - [ ] 기본 테스트 전략 수립 (서비스/라우터 단위)
   - [x] `tests/test_fetch_cursor_pagination.py` (페이지네이션 유틸만)
 - [ ] 배포용 정적 파일 서빙 경로 검증 (`frontend/dist` + FastAPI mount)
-- [ ] `render.yaml` 작성
+- [x] `backend/render.yaml` 작성 (백엔드 Render 배포)
 - [ ] `.env.example`에 AI 관련 환경변수 문서화 (현재 키는 DB `ai_ocr_settings` 저장)
 
 ---
 
 ## 12) 알려진 제한·후속 개선 (메모)
 
+- [x] Bedrock: foundation model ID 직접 호출 불가 → `resolve_bedrock_model`이 `apac.*`/`us.*`/`eu.*` 자동 적용
 - [ ] `MigratePage` 재진입 시 **진행 중 마이그레이션/수집** 폴링 자동 복구
 - [ ] 수집·마이그레이션 진행 상태가 **서버 메모리**에만 있음 → 다중 워커/재시작 시 유실
 - [ ] 마이그레이션 직후 타겟 트리는 DB 스냅샷 기준 → **재수집** 전까지 새 항목이 트리에 안 보일 수 있음
@@ -230,3 +238,5 @@ npm run dev
 - 2026-06-01: 수집 JSON 파싱 실패 경고·`SyncProgressPanel` UX, **브랜드 단건 수집** API/UI.
 - 2026-06-01: AI OCR·이미지 아티클 변환·AI 설정·프롬프트 템플릿(Alembic 0007~0013), Gemini 2.5 Pro·로컬 파일 OCR.
 - 2026-06-01: `AiOcrPage` 분석 중 스피너·이전 분석 비활성화, `README.md` / `IMPLEMENTATION_TODO.md` 현행화.
+- 2026-06-02: AWS Bedrock Converse·다중 AI 연동(`ai_ocr_connections`)·AI 호출 이력 모니터·Alembic 0018~0019, `README.md` Bedrock inference profile 안내 현행화.
+- 2026-06-02: 프롬프트 관리 메뉴 분리·연동별 프롬프트·Bedrock inference profile 자동 변환·토큰 메트릭 통합·메인 레이아웃 100% 너비, Alembic 0020.

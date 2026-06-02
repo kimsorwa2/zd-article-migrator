@@ -21,12 +21,28 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://user:password@localhost:5432/zd_article_migrator",
 )
 
-# Neon PostgreSQL 특성을 고려해 연결 유효성 검사를 활성화한다.
+# Neon PostgreSQL: 연결 유효성 검사 + 주기적 풀 교체.
+# asyncpg/SQLAlchemy prepared statement 캐시를 모두 끄면,
+# alembic 마이그레이션 직후 InvalidCachedStatementError를 피할 수 있다.
 engine = create_async_engine(
     DATABASE_URL,
     pool_pre_ping=True,
+    pool_recycle=300,
     echo=False,
+    connect_args={
+        "prepared_statement_cache_size": 0,
+        "statement_cache_size": 0,
+    },
 )
+
+
+async def dispose_engine_pool() -> None:
+    """
+    /**
+     * 연결 풀을 비운다. 스키마 변경 후 stale prepared statement 제거용.
+     */
+    """
+    await engine.dispose()
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,

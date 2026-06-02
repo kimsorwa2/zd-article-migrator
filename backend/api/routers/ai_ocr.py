@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.schemas import (
     AiOcrAnalysisHistoryListResponse,
     AiOcrAnalyzeResponse,
+    AiOcrConnectionCreateRequest,
+    AiOcrConnectionResponse,
+    AiOcrConnectionTestResponse,
+    AiOcrConnectionUpdateRequest,
     AiOcrCreateArticleRequest,
     AiOcrCreateArticleResponse,
     AiOcrPromptTemplateCreateRequest,
@@ -21,6 +27,7 @@ from services.ai_ocr_log import AiOcrServiceError
 from services.ai_ocr_service import AiOcrService
 
 router = APIRouter(prefix="/ai-ocr", tags=["ai-ocr"])
+logger = logging.getLogger(__name__)
 
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
 
@@ -84,7 +91,120 @@ async def update_ai_ocr_settings(
             gemini_model=payload.gemini_model,
             openai_model=payload.openai_model,
             active_prompt_id=payload.active_prompt_id,
+            active_connection_id=payload.active_connection_id,
         )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    return AiOcrSettingsResponse.model_validate(data)
+
+
+@router.post("/connections", response_model=AiOcrConnectionResponse, status_code=status.HTTP_201_CREATED)
+async def create_ai_ocr_connection(
+    payload: AiOcrConnectionCreateRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> AiOcrConnectionResponse:
+    """
+    /**
+     * AI Vision 연동 프로필을 추가한다.
+     */
+    """
+    try:
+        item = await AiOcrService.create_connection(
+            session,
+            provider=payload.provider,
+            model=payload.model,
+            account=payload.account,
+            api_key=payload.api_key,
+            api_secret=payload.api_secret,
+            aws_region=payload.aws_region,
+            prompt_template_id=payload.prompt_template_id,
+            set_active=payload.set_active,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    return AiOcrConnectionResponse.model_validate(item)
+
+
+@router.put("/connections/{connection_id}", response_model=AiOcrConnectionResponse)
+async def update_ai_ocr_connection(
+    connection_id: int,
+    payload: AiOcrConnectionUpdateRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> AiOcrConnectionResponse:
+    """
+    /**
+     * AI Vision 연동 프로필을 수정한다.
+     */
+    """
+    try:
+        item = await AiOcrService.update_connection(
+            session,
+            connection_id=connection_id,
+            model=payload.model,
+            account=payload.account,
+            api_key=payload.api_key,
+            api_secret=payload.api_secret,
+            aws_region=payload.aws_region,
+            prompt_template_id=payload.prompt_template_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    return AiOcrConnectionResponse.model_validate(item)
+
+
+@router.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_ai_ocr_connection(
+    connection_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> None:
+    """
+    /**
+     * AI Vision 연동 프로필을 삭제한다.
+     */
+    """
+    try:
+        await AiOcrService.delete_connection(session, connection_id=connection_id)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+
+@router.post("/connections/{connection_id}/test", response_model=AiOcrConnectionTestResponse)
+async def test_ai_ocr_connection(
+    connection_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> AiOcrConnectionTestResponse:
+    """
+    /**
+     * 저장된 AI 연동 프로필로 최소 API 호출(연결 테스트)을 수행한다.
+     */
+    """
+    logger.info("POST /ai-ocr/connections/%s/test", connection_id)
+    try:
+        result = await AiOcrService.test_connection(session, connection_id=connection_id)
+    except ValueError as error:
+        logger.warning("AI 연동 테스트 400 | connection_id=%s | %s", connection_id, error)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    except Exception as error:
+        logger.exception("AI 연동 테스트 500 | connection_id=%s", connection_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+    return AiOcrConnectionTestResponse.model_validate(result)
+
+
+@router.put("/connections/{connection_id}/activate", response_model=AiOcrSettingsResponse)
+async def activate_ai_ocr_connection(
+    connection_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> AiOcrSettingsResponse:
+    """
+    /**
+     * OCR 분석에 사용할 활성 연동을 지정한다.
+     */
+    """
+    try:
+        data = await AiOcrService.set_active_connection(session, connection_id=connection_id)
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     return AiOcrSettingsResponse.model_validate(data)
@@ -175,6 +295,20 @@ async def list_ai_ocr_history(session: AsyncSession = Depends(get_async_session)
     """
     items = await AiOcrService.list_analysis_history(session)
     return AiOcrAnalysisHistoryListResponse.model_validate({"items": items})
+
+
+@router.get("/history/metrics", response_model=AiOcrAnalysisHistoryListResponse)
+async def get_ai_ocr_history_metrics(
+    limit: int = 100,
+    session: AsyncSession = Depends(get_async_session),
+) -> AiOcrAnalysisHistoryListResponse:
+    """
+    /**
+     * AI OCR 호출 이력 + metrics 조회 (모니터링용).
+     */
+    """
+    items = await AiOcrService.list_analysis_history(session, limit=limit)
+    return AiOcrAnalysisHistoryListResponse(items=items)
 
 
 @router.post("/analyze", response_model=AiOcrAnalyzeResponse)

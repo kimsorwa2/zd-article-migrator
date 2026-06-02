@@ -100,15 +100,53 @@ class Article(Base):
     a_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class AiOcrConnection(Base):
+    """
+    AI Vision OCR 연동 프로필(동일 제공자라도 계정·키별로 여러 개 등록 가능).
+    """
+
+    __tablename__ = "ai_ocr_connections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    account: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Bedrock 단기 API 키는 1000자 이상일 수 있음
+    api_key: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    api_secret: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    aws_region: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    prompt_template_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("ai_ocr_prompt_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class AiOcrSetting(Base):
     """
-    AI-OCR 전역 설정(단일 행 id=1). Gemini·OpenAI 등 제공자별 계정·키·활성 프롬프트.
+    AI-OCR 전역 설정(단일 행 id=1). 활성 연동·프롬프트 및 레거시 제공자별 필드.
     """
 
     __tablename__ = "ai_ocr_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     active_provider: Mapped[str] = mapped_column(String(32), nullable=False, server_default="gemini")
+    active_connection_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("ai_ocr_connections.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     active_prompt_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("ai_ocr_prompt_templates.id", ondelete="SET NULL"),
@@ -171,6 +209,19 @@ class AiOcrAnalysisHistory(Base):
     detected_product: Mapped[str] = mapped_column(String(255), nullable=False)
     maintenance_cycle: Mapped[str | None] = mapped_column(String(100), nullable=True)
     body_preview_text: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_template_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    image_size_kb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    thinking_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finish_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    parse_success: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    experiment_tag: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    raw_response_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parse_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    used_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    used_user_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -7,24 +7,45 @@ from __future__ import annotations
 import base64
 import json
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import httpx
 
 from services.ai_model_options import (
+    DEFAULT_BEDROCK_MODEL,
+    DEFAULT_BEDROCK_REGION,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_OPENAI_MODEL,
     gemini_supports_thinking,
+    resolve_bedrock_model,
     resolve_gemini_model,
     resolve_openai_model,
+)
+from services.ai_usage_metrics import (
+    normalize_bedrock_usage,
+    normalize_gemini_usage,
+    normalize_openai_usage,
+    normalize_usage_metrics_dict,
 )
 
 if TYPE_CHECKING:
     from services.ai_ocr_log import AiOcrLogCollector
 
-AiVisionProvider = Literal["gemini", "openai"]
-SUPPORTED_VISION_PROVIDERS: tuple[AiVisionProvider, ...] = ("gemini", "openai")
+AiVisionProvider = Literal["gemini", "openai", "bedrock"]
+SUPPORTED_VISION_PROVIDERS: tuple[AiVisionProvider, ...] = ("gemini", "openai", "bedrock")
+
+
+class AiOcrParseError(RuntimeError):
+    """
+    AI 원문은 수신했으나 JSON 파싱에 실패한 경우.
+    metrics에 raw_response_text 등 호출 메트릭을 담아 이력 저장에 활용한다.
+    """
+
+    def __init__(self, message: str, *, metrics: dict[str, object]) -> None:
+        super().__init__(message)
+        self.metrics = metrics
 
 # Gemini Vision 모델 (1.5 Pro는 API에서 종료됨 → 동일 키에서 사용 가능한 Pro 계열)
 GEMINI_MODEL = "gemini-2.5-pro"
@@ -380,6 +401,8 @@ def image_bytes_to_article(
     provider: AiVisionProvider,
     api_key: str,
     model: str | None = None,
+    api_secret: str | None = None,
+    aws_region: str | None = None,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     user_prompt: str = DEFAULT_USER_PROMPT,
     log: AiOcrLogCollector | None = None,
@@ -411,7 +434,139 @@ def image_bytes_to_article(
             user_prompt=user_prompt,
             log=log,
         )
+    if provider == "bedrock":
+        if not api_key:
+            raise ValueError("AWS Bedrock API 키가 필요합니다.")
+        return image_bytes_to_article_bedrock(
+            image_bytes,
+            filename,
+            media_type,
+            bedrock_api_key=api_key,
+            model=resolve_bedrock_model(model, aws_region),
+            aws_region=aws_region or DEFAULT_BEDROCK_REGION,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            log=log,
+        )
     raise ValueError(f"지원하지 않는 AI 제공자입니다: {provider}")
+
+
+def _bedrock_image_format(media_type: str) -> str:
+    """Bedrock Converse API용 이미지 포맷 문자열."""
+    if "png" in media_type:
+        return "png"
+    if "gif" in media_type:
+        return "gif"
+    if "webp" in media_type:
+        return "webp"
+    return "jpeg"
+
+
+def image_bytes_to_article_bedrock(
+    image_bytes: bytes,
+    filename: str,
+    media_type: str,
+    *,
+    bedrock_api_key: str,
+    model: str = DEFAULT_BEDROCK_MODEL,
+    aws_region: str = DEFAULT_BEDROCK_REGION,
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    user_prompt: str = DEFAULT_USER_PROMPT,
+    log: AiOcrLogCollector | None = None,
+) -> dict:
+    """
+    /**
+     * AWS Bedrock Converse API로 아티클 JSON을 생성한다.
+     * Amazon Bedrock API 키(Bearer) — Authorization 헤더로 직접 호출한다.
+     */
+    """
+    from services.ai_ocr_log import AiOcrLogCollector as LogCollector
+    from services.bedrock_runtime import bedrock_converse, mask_bedrock_api_key
+
+    t_start = time.perf_counter()
+    image_size_kb = max(1, len(image_bytes) // 1024)
+    image_format = _bedrock_image_format(media_type)
+
+    if log is not None:
+        log.info(
+            "Bedrock Vision 요청",
+            "\n".join(
+                [
+                    "인증: Bedrock API key (Bearer)",
+                    f"converse modelId={model}",
+                    f"region={aws_region}",
+                    f"key={mask_bedrock_api_key(bedrock_api_key)}",
+                    f"파일: {filename}",
+                    f"이미지: {media_type}, {image_size_kb}KB",
+                ]
+            ),
+        )
+
+    try:
+        response = bedrock_converse(
+            api_key=bedrock_api_key,
+            region=aws_region,
+            model_id=model,
+            system=[{"text": system_prompt}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "image": {
+                                "format": image_format,
+                                "source": {"bytes": image_bytes},
+                            }
+                        },
+                        {"text": user_prompt},
+                    ],
+                }
+            ],
+            inference_config={"maxTokens": 4096, "temperature": 0.2},
+            log_context="Bedrock Vision",
+        )
+    except RuntimeError as error:
+        if log is not None:
+            log.error("Bedrock 응답 오류", str(error))
+        raise
+
+    output_message = response.get("output", {}).get("message", {})
+    parts = output_message.get("content") or []
+    raw_text = next((part.get("text") for part in parts if isinstance(part.get("text"), str)), None)
+    if not raw_text:
+        if log is not None:
+            log.error("Bedrock 응답 파싱 실패", LogCollector.format_json(response))
+        raise RuntimeError("Bedrock 응답에서 텍스트를 찾을 수 없습니다.")
+
+    usage = response.get("usage") or {}
+    stop_reason = response.get("stopReason")
+    if log is not None:
+        log.success(
+            "Bedrock Vision 응답 성공",
+            "\n".join(
+                [
+                    f"stopReason: {stop_reason}",
+                    f"usage: {LogCollector.format_json(usage)}",
+                    f"text_length: {len(raw_text)}",
+                ]
+            ),
+        )
+
+    token_metrics = normalize_bedrock_usage(usage)
+    base_metrics: dict[str, object] = {
+        **token_metrics,
+        "finish_reason": stop_reason,
+        "latency_ms": int((time.perf_counter() - t_start) * 1000),
+        "raw_response_text": raw_text,
+    }
+    base_metrics = normalize_usage_metrics_dict(base_metrics)  # type: ignore[assignment]
+    try:
+        result = _parse_article_json_text(raw_text)
+        result = _finalize_article_result(result)
+    except json.JSONDecodeError as error:
+        raise AiOcrParseError(str(error), metrics=base_metrics) from error
+    result["_metrics"] = base_metrics
+    return result
 
 
 def image_bytes_to_article_gemini(
@@ -432,6 +587,7 @@ def image_bytes_to_article_gemini(
     """
     from services.ai_ocr_log import AiOcrLogCollector as LogCollector
 
+    t_start = time.perf_counter()
     image_size_kb = max(1, len(image_bytes) // 1024)
     request_url = _build_gemini_url("****", model)
     log_request_body = _build_gemini_request_body(
@@ -523,7 +679,7 @@ def image_bytes_to_article_gemini(
             log.error("Gemini 응답 파싱 실패", LogCollector.format_json(payload))
         raise RuntimeError("Gemini 응답에서 텍스트를 찾을 수 없습니다.")
 
-    usage = payload.get("usageMetadata")
+    usage = payload.get("usageMetadata") or {}
     if log is not None:
         log.success(
             "Gemini Vision 응답 성공",
@@ -544,8 +700,21 @@ def image_bytes_to_article_gemini(
             ),
         )
 
-    result = _parse_article_json_text(raw_text)
-    return _finalize_article_result(result)
+    token_metrics = normalize_gemini_usage(usage)
+    base_metrics: dict[str, object] = {
+        **token_metrics,
+        "finish_reason": finish_reason,
+        "latency_ms": int((time.perf_counter() - t_start) * 1000),
+        "raw_response_text": raw_text,
+    }
+    base_metrics = normalize_usage_metrics_dict(base_metrics)  # type: ignore[assignment]
+    try:
+        result = _parse_article_json_text(raw_text)
+        result = _finalize_article_result(result)
+    except json.JSONDecodeError as error:
+        raise AiOcrParseError(str(error), metrics=base_metrics) from error
+    result["_metrics"] = base_metrics
+    return result
 
 
 def _build_openai_request_body(
@@ -603,6 +772,7 @@ def image_bytes_to_article_openai(
     """
     from services.ai_ocr_log import AiOcrLogCollector as LogCollector
 
+    t_start = time.perf_counter()
     image_size_kb = max(1, len(image_bytes) // 1024)
     log_request_body = _build_openai_request_body(
         media_type=media_type,
@@ -686,7 +856,8 @@ def image_bytes_to_article_openai(
             log.error("OpenAI 응답 파싱 실패", LogCollector.format_json(payload))
         raise RuntimeError("OpenAI 응답에서 텍스트를 찾을 수 없습니다.")
 
-    usage = payload.get("usage")
+    usage = payload.get("usage") or {}
+    finish_reason_openai = choices[0].get("finish_reason")
     if log is not None:
         log.success(
             "OpenAI Vision 응답 성공",
@@ -699,7 +870,7 @@ def image_bytes_to_article_openai(
                     LogCollector.format_json(
                         {
                             "model": payload.get("model"),
-                            "finish_reason": choices[0].get("finish_reason"),
+                            "finish_reason": finish_reason_openai,
                             "text_length": len(raw_text),
                         }
                     ),
@@ -707,5 +878,18 @@ def image_bytes_to_article_openai(
             ),
         )
 
-    result = _parse_article_json_text(raw_text)
-    return _finalize_article_result(result)
+    token_metrics = normalize_openai_usage(usage)
+    base_metrics: dict[str, object] = {
+        **token_metrics,
+        "finish_reason": finish_reason_openai,
+        "latency_ms": int((time.perf_counter() - t_start) * 1000),
+        "raw_response_text": raw_text,
+    }
+    base_metrics = normalize_usage_metrics_dict(base_metrics)  # type: ignore[assignment]
+    try:
+        result = _parse_article_json_text(raw_text)
+        result = _finalize_article_result(result)
+    except json.JSONDecodeError as error:
+        raise AiOcrParseError(str(error), metrics=base_metrics) from error
+    result["_metrics"] = base_metrics
+    return result

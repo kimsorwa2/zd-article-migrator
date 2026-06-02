@@ -768,6 +768,9 @@ class AiOcrModelOptionsResponse(BaseModel):
 
     gemini: list[AiOcrModelOptionResponse] = Field(default_factory=list)
     openai: list[AiOcrModelOptionResponse] = Field(default_factory=list)
+    bedrock: list[AiOcrModelOptionResponse] = Field(default_factory=list)
+    # Bedrock: 리전별 inference profile ID 예시 (foundation → apac.* 등)
+    bedrock_inference_profiles: list[AiOcrModelOptionResponse] = Field(default_factory=list)
     defaults: dict[str, str] = Field(default_factory=dict)
 
 
@@ -793,11 +796,75 @@ class AiOcrPromptTemplateResponse(BaseModel):
     updated_at: datetime
 
 
+class AiOcrConnectionResponse(BaseModel):
+    """AI Vision 연동 프로필 한 건."""
+
+    id: int
+    provider: Literal["gemini", "openai", "bedrock"]
+    model: str
+    account: str | None = None
+    has_api_key: bool = False
+    api_key_masked: str | None = None
+    has_api_secret: bool = False
+    api_secret_masked: str | None = None
+    aws_region: str | None = None
+    label: str
+    is_active: bool = False
+    prompt_template_id: int | None = None
+    prompt_template_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# Bedrock 단기 API 키는 1000자 이상일 수 있음 (장기 키는 약 132자)
+AI_OCR_CONNECTION_API_KEY_MAX_LENGTH = 4096
+
+
+class AiOcrConnectionCreateRequest(BaseModel):
+    """AI 연동 프로필 추가 요청."""
+
+    provider: Literal["gemini", "openai", "bedrock"]
+    model: str = Field(min_length=1, max_length=128)
+    account: str | None = Field(default=None, max_length=255)
+    api_key: str | None = Field(default=None, max_length=AI_OCR_CONNECTION_API_KEY_MAX_LENGTH)
+    api_secret: str | None = Field(default=None, max_length=512, description="(미사용) 레거시 필드")
+    aws_region: str | None = Field(default=None, max_length=32)
+    prompt_template_id: int | None = Field(default=None, description="이 연동에 쓸 OCR 프롬프트 템플릿 ID")
+    set_active: bool = Field(default=True)
+
+
+class AiOcrConnectionTestResponse(BaseModel):
+    """AI 연동 프로필 연결 테스트 결과."""
+
+    success: bool
+    message: str
+    provider: Literal["gemini", "openai", "bedrock"]
+    model: str
+    latency_ms: int | None = None
+
+
+class AiOcrConnectionUpdateRequest(BaseModel):
+    """AI 연동 프로필 수정 요청."""
+
+    model: str | None = Field(default=None, max_length=128)
+    account: str | None = Field(default=None, max_length=255)
+    api_key: str | None = Field(
+        default=None,
+        max_length=AI_OCR_CONNECTION_API_KEY_MAX_LENGTH,
+        description="비우면 기존 키 유지",
+    )
+    api_secret: str | None = Field(default=None, max_length=512, description="비우면 기존 Secret 유지")
+    aws_region: str | None = Field(default=None, max_length=32)
+    prompt_template_id: int | None = Field(default=None, description="이 연동에 쓸 OCR 프롬프트 템플릿 ID")
+
+
 class AiOcrSettingsResponse(BaseModel):
     """AI-OCR 설정 응답."""
 
-    active_provider: Literal["gemini", "openai"]
+    active_provider: Literal["gemini", "openai", "bedrock"]
+    active_connection_id: int | None = None
     active_prompt_id: int | None = None
+    connections: list[AiOcrConnectionResponse] = Field(default_factory=list)
     gemini: AiOcrProviderConfigResponse
     openai: AiOcrProviderConfigResponse
     prompt_templates: list[AiOcrPromptTemplateResponse] = Field(default_factory=list)
@@ -808,7 +875,8 @@ class AiOcrSettingsResponse(BaseModel):
 class AiOcrSettingsUpdateRequest(BaseModel):
     """AI-OCR 설정 저장 요청."""
 
-    active_provider: Literal["gemini", "openai"] | None = None
+    active_provider: Literal["gemini", "openai", "bedrock"] | None = None
+    active_connection_id: int | None = Field(default=None, description="OCR에 사용할 연동 프로필 ID")
     active_prompt_id: int | None = Field(default=None, description="OCR 분석에 사용할 프롬프트 템플릿 ID")
     gemini_account: str | None = Field(default=None, max_length=255)
     gemini_api_key: str | None = Field(
@@ -872,6 +940,8 @@ class AiOcrAnalysisHistoryItem(BaseModel):
 
     id: int
     label: str
+    display_label: str | None = None
+    ai_model: str | None = None
     source_filename: str
     title: str
     html_body: str
@@ -879,6 +949,20 @@ class AiOcrAnalysisHistoryItem(BaseModel):
     detected_product: str
     maintenance_cycle: str | None = None
     body_preview_text: str
+    prompt_template_id: int | None = None
+    image_size_kb: int | None = None
+    latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    thinking_tokens: int | None = None
+    total_tokens: int | None = None
+    finish_reason: str | None = None
+    parse_success: bool | None = None
+    experiment_tag: str | None = None
+    raw_response_text: str | None = None
+    parse_error_message: str | None = None
+    used_system_prompt: str | None = None
+    used_user_prompt: str | None = None
     created_at: datetime
 
 

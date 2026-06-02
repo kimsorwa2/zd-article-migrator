@@ -305,23 +305,21 @@ export default function ConvertImagePage({ instances }: ConvertImagePageProps) {
     };
   }, [currentImagePreviewUrl]);
 
-  async function handleProviderChange(provider: AiOcrProvider) {
-    if (!aiSettings || aiSettings.active_provider === provider) {
+  async function handleConnectionChange(connectionId: number) {
+    if (!aiSettings || aiSettings.active_connection_id === connectionId) {
       return;
     }
     setProviderSaving(true);
     setMessage(null);
     try {
-      const updated = await apiClient.updateAiOcrSettings({ active_provider: provider });
+      const updated = await apiClient.activateAiOcrConnection(connectionId);
       setAiSettings(updated);
-      setMessage({
-        type: "ok",
-        text: `분석 AI가 ${AI_PROVIDER_OPTIONS.find((option) => option.value === provider)?.label}로 변경되었습니다.`,
-      });
+      const label = updated.connections.find((item) => item.id === connectionId)?.label ?? "연동";
+      setMessage({ type: "ok", text: `분석 AI가 「${label}」(으)로 변경되었습니다.` });
     } catch (error) {
       setMessage({
         type: "error",
-        text: error instanceof Error ? error.message : "AI 제공자 변경에 실패했습니다.",
+        text: error instanceof Error ? error.message : "AI 연동 변경에 실패했습니다.",
       });
     } finally {
       setProviderSaving(false);
@@ -497,13 +495,16 @@ export default function ConvertImagePage({ instances }: ConvertImagePageProps) {
           <label className="ai-ocr-provider-select-label">
             분석 AI
             <select
-              value={aiSettings?.active_provider ?? "gemini"}
-              disabled={providerSaving || !aiSettings}
-              onChange={(event) => void handleProviderChange(event.target.value as AiOcrProvider)}
+              value={aiSettings?.active_connection_id ?? ""}
+              disabled={providerSaving || !aiSettings || aiSettings.connections.length === 0}
+              onChange={(event) => void handleConnectionChange(Number(event.target.value))}
             >
-              {AI_PROVIDER_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
+              {aiSettings?.connections.length === 0 ? (
+                <option value="">등록된 연동 없음</option>
+              ) : null}
+              {aiSettings?.connections.map((connection) => (
+                <option key={connection.id} value={connection.id}>
+                  {connection.label}
                 </option>
               ))}
             </select>
