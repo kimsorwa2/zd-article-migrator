@@ -368,7 +368,7 @@ export interface DeleteExecuteResponse {
   failed_items: DeleteFailedItem[];
 }
 
-const API_BASE = "/api";
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${url}`, {

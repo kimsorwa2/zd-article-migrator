@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers import ai_ocr, delete, fetch, image_convert, instances, migrate
 
@@ -16,6 +17,13 @@ app = FastAPI(
     title="zd-article-migrator",
     description="Zendesk 아티클 마이그레이션 백엔드 API",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://zd-article-migrator.onrender.com"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(instances.router, prefix="/api")
