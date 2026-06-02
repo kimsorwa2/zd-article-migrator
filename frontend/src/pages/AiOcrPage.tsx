@@ -45,6 +45,7 @@ export default function AiOcrPage({ instances }: AiOcrPageProps) {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [sectionSelection, setSectionSelection] = useState<AiOcrSectionSelection | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [preprocess, setPreprocess] = useState(true);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -227,7 +228,7 @@ export default function AiOcrPage({ instances }: AiOcrPageProps) {
     setEditMode("none");
     setWorkLogs([]);
     try {
-      const result = await apiClient.analyzeAiOcrImage(selectedFile);
+      const result = await apiClient.analyzeAiOcrImage(selectedFile, preprocess);
       appendWorkLogs(result.logs ?? []);
       setDraft(result);
       setSelectedHistoryId(result.history_id);
@@ -448,6 +449,19 @@ export default function AiOcrPage({ instances }: AiOcrPageProps) {
               </div>
             )}
           </div>
+          <label className={`form-checkbox-label${analyzing ? " is-disabled" : ""}`}>
+            <input
+              type="checkbox"
+              checked={preprocess}
+              onChange={(event) => setPreprocess(event.target.checked)}
+              disabled={analyzing}
+            />
+            <span>
+              OCR 전 이미지 전처리 (업스케일·대비·선명도)
+              <br />
+              <span className="muted">Gemini·OpenAI·Bedrock 공통</span>
+            </span>
+          </label>
           <button
             type="button"
             className="button-primary"
@@ -502,7 +516,7 @@ export default function AiOcrPage({ instances }: AiOcrPageProps) {
                 <p className="muted">분석 결과가 여기에 표시됩니다.</p>
               </div>
             ) : (
-              <>
+              <div className="ai-ocr-preview-pane-content">
                 <dl className="ai-ocr-preview-meta">
                   <div>
                     <dt>제목</dt>
@@ -525,7 +539,7 @@ export default function AiOcrPage({ instances }: AiOcrPageProps) {
                   <p className="ai-ocr-preview-body-title">본문 미리보기</p>
                   <AiOcrHtmlPreview htmlBody={draft.html_body} />
                 </div>
-              </>
+              </div>
             )}
           </div>
           {draft ? (

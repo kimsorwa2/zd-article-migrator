@@ -592,6 +592,7 @@ class ImageConvertService:
         source_instance_id: int,
         article_id: int,
         image_overrides: dict[int, tuple[bytes, str, str]] | None = None,
+        preprocess: bool = True,
     ) -> dict:
         """
         /**
@@ -696,6 +697,7 @@ class ImageConvertService:
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     log=log,
+                    preprocess=preprocess,
                 )
             except (RuntimeError, json.JSONDecodeError) as error:
                 log.error(f"이미지 {index + 1} OCR 실패", str(error))

@@ -45,6 +45,7 @@ from services.article_from_image import (
     normalize_zendesk_html_body,
     resolve_media_type,
 )
+from services.image_preprocess import experiment_tag_for_preprocess
 from services.zendesk_client import ZendeskClient, ZendeskClientError
 
 logger = logging.getLogger(__name__)
@@ -344,14 +345,23 @@ class AiOcrService:
         if template is None:
             raise ValueError("프롬프트를 찾을 수 없습니다.")
 
-        if name is not None and name.strip():
-            template.name = name.strip()
+        if name is not None:
+            trimmed_name = name.strip()
+            if not trimmed_name:
+                raise ValueError("프롬프트 이름을 입력하세요.")
+            template.name = trimmed_name
+
         if description is not None:
             template.description = description.strip() if description.strip() else None
-        if system_prompt is not None and system_prompt.strip():
-            template.system_prompt = system_prompt.strip()
-        if user_prompt is not None and user_prompt.strip():
-            template.user_prompt = user_prompt.strip()
+
+        if template.is_builtin:
+            # 내장 기본 프롬프트는 이름·설명만 수정 (본문은 읽기 전용)
+            pass
+        else:
+            if system_prompt is not None and system_prompt.strip():
+                template.system_prompt = system_prompt.strip()
+            if user_prompt is not None and user_prompt.strip():
+                template.user_prompt = user_prompt.strip()
 
         await session.commit()
         await session.refresh(template)
@@ -888,6 +898,7 @@ class AiOcrService:
         *,
         filename: str,
         content: bytes,
+        preprocess: bool = True,
     ) -> dict:
         """
         /**
@@ -905,7 +916,15 @@ class AiOcrService:
         provider_label = PROVIDER_LABELS.get(provider, provider)
         log.info(
             "OCR 분석 시작",
-            f"AI: {provider_label}\n모델: {model_id}\n파일: {filename}\n이미지 크기: {max(1, len(content) // 1024)}KB",
+            "\n".join(
+                [
+                    f"AI: {provider_label}",
+                    f"모델: {model_id}",
+                    f"파일: {filename}",
+                    f"이미지 크기: {max(1, len(content) // 1024)}KB",
+                    f"전처리: {'켜짐' if preprocess else '꺼짐'}",
+                ]
+            ),
         )
 
         try:
@@ -937,6 +956,7 @@ class AiOcrService:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 log=log,
+                preprocess=preprocess,
             )
             metrics = dict(result.pop("_metrics", {}) or {})
             html_body = str(result.get("html_body") or "")
@@ -998,6 +1018,11 @@ class AiOcrService:
                 thinking_tokens=cls._metrics_int(metrics, "thinking_tokens", default_zero=True),
                 finish_reason=cls._metrics_str(metrics, "finish_reason"),
                 latency_ms=cls._metrics_int(metrics, "latency_ms"),
+                preprocessed=bool(metrics.get("preprocessed")) if metrics else None,
+                processed_image_size_kb=cls._metrics_int(metrics, "processed_size_kb"),
+                experiment_tag=experiment_tag_for_preprocess(bool(metrics.get("preprocessed")))
+                if metrics.get("preprocessed") is not None
+                else None,
                 title=str(history_payload["title"]),
                 html_body=str(history_payload["html_body"]),
                 label_names=list(history_payload["label_names"]),  # type: ignore[arg-type]
@@ -1055,6 +1080,8 @@ class AiOcrService:
                     "body_preview_text": row.body_preview_text,
                     "prompt_template_id": row.prompt_template_id,
                     "image_size_kb": row.image_size_kb,
+                    "preprocessed": row.preprocessed,
+                    "processed_image_size_kb": row.processed_image_size_kb,
                     "latency_ms": row.latency_ms,
                     **token_fields,
                     "finish_reason": row.finish_reason,
@@ -1068,6 +1095,24 @@ class AiOcrService:
                 }
             )
         return items
+
+    @classmethod
+    async def delete_analysis_history_by_ids(cls, session: AsyncSession, *, ids: list[int]) -> int:
+        """
+        /**
+         * 지정한 ID의 OCR 분석 이력 행을 DB에서 삭제한다.
+         * @param ids 삭제할 이력 ID 목록(중복은 무시)
+         * @returns {int} 실제 삭제된 행 수
+         */
+        """
+        unique_ids = list(dict.fromkeys(ids))
+        if not unique_ids:
+            return 0
+        result = await session.execute(
+            delete(AiOcrAnalysisHistory).where(AiOcrAnalysisHistory.id.in_(unique_ids))
+        )
+        await session.commit()
+        return int(result.rowcount or 0)
 
     @classmethod
     async def _allocate_history_sequence(
@@ -1125,6 +1170,8 @@ class AiOcrService:
         thinking_tokens: int | None = None,
         finish_reason: str | None = None,
         parse_success: bool | None = None,
+        preprocessed: bool | None = None,
+        processed_image_size_kb: int | None = None,
         experiment_tag: str | None = None,
         raw_response_text: str | None = None,
         parse_error_message: str | None = None,
@@ -1168,6 +1215,8 @@ class AiOcrService:
             thinking_tokens=thinking_tokens,
             finish_reason=finish_reason,
             parse_success=parse_success,
+            preprocessed=preprocessed,
+            processed_image_size_kb=processed_image_size_kb,
             experiment_tag=experiment_tag,
             raw_response_text=raw_response_text,
             parse_error_message=parse_error_message,

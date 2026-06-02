@@ -321,6 +321,8 @@ export interface AiOcrAnalysisHistoryItem {
   body_preview_text: string;
   prompt_template_id?: number | null;
   image_size_kb?: number | null;
+  preprocessed?: boolean | null;
+  processed_image_size_kb?: number | null;
   latency_ms?: number | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
@@ -607,6 +609,11 @@ export const apiClient = {
     request<{ items: AiOcrAnalysisHistoryItem[] }>(
       `/ai-ocr/history/metrics?limit=${encodeURIComponent(String(limit))}`,
     ),
+  deleteAiOcrHistory: (ids: number[]) =>
+    request<{ deleted_count: number }>("/ai-ocr/history", {
+      method: "DELETE",
+      body: JSON.stringify({ ids }),
+    }),
   updateAiOcrSettings: (payload: {
     active_provider?: AiOcrProvider;
     active_connection_id?: number | null;
@@ -700,16 +707,33 @@ export const apiClient = {
   },
   getImageConvertPreviewUrl: (sourceInstanceId: number, articleId: number, imageIndex: number) =>
     `${API_BASE}/image-convert/articles/${articleId}/images/${imageIndex}?source_instance_id=${sourceInstanceId}`,
-  analyzeImageConvertArticle: (payload: { source_instance_id: number; article_id: number }) =>
-    request<ImageConvertAnalyzeResult>("/image-convert/analyze", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
+  analyzeImageConvertArticle: (payload: {
+    source_instance_id: number;
+    article_id: number;
+    preprocess?: boolean;
+  }) => {
+    const params = new URLSearchParams();
+    if (payload.preprocess === false) {
+      params.set("preprocess", "false");
+    }
+    const query = params.toString();
+    return request<ImageConvertAnalyzeResult>(
+      `/image-convert/analyze${query ? `?${query}` : ""}`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          source_instance_id: payload.source_instance_id,
+          article_id: payload.article_id,
+        }),
+      },
+    );
+  },
   analyzeImageConvertArticleWithFiles: async (payload: {
     source_instance_id: number;
     article_id: number;
     image_indices: number[];
     files: File[];
+    preprocess?: boolean;
   }): Promise<ImageConvertAnalyzeResult> => {
     const formData = new FormData();
     formData.append("source_instance_id", String(payload.source_instance_id));
@@ -718,10 +742,18 @@ export const apiClient = {
     for (const file of payload.files) {
       formData.append("files", file);
     }
-    const response = await fetch(`${API_BASE}/image-convert/analyze-with-files`, {
-      method: "POST",
-      body: formData,
-    });
+    const params = new URLSearchParams();
+    if (payload.preprocess === false) {
+      params.set("preprocess", "false");
+    }
+    const query = params.toString();
+    const response = await fetch(
+      `${API_BASE}/image-convert/analyze-with-files${query ? `?${query}` : ""}`,
+      {
+        method: "POST",
+        body: formData,
+      },
+    );
     if (!response.ok) {
       const fallback = `요청 실패: ${response.status}`;
       let detailMessage = fallback;
@@ -741,10 +773,15 @@ export const apiClient = {
     }
     return (await response.json()) as ImageConvertAnalyzeResult;
   },
-  analyzeAiOcrImage: async (file: File): Promise<AiOcrAnalyzeResult> => {
+  analyzeAiOcrImage: async (file: File, preprocess = true): Promise<AiOcrAnalyzeResult> => {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await fetch(`${API_BASE}/ai-ocr/analyze`, {
+    const params = new URLSearchParams();
+    if (!preprocess) {
+      params.set("preprocess", "false");
+    }
+    const query = params.toString();
+    const response = await fetch(`${API_BASE}/ai-ocr/analyze${query ? `?${query}` : ""}`, {
       method: "POST",
       body: formData,
     });

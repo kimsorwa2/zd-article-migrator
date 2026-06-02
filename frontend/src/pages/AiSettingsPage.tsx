@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bot, KeyRound, Plus, Trash2, Zap } from "lucide-react";
 import { apiClient, type AiOcrConnection, type AiOcrSettings } from "../api/client";
+import { modelOptionsForProvider } from "../constants/aiModelOptions";
 import AiOcrConnectionModal from "../components/AiOcrConnectionModal";
 import LoadingPanel from "../components/LoadingPanel";
 import NoticeBanner from "../components/NoticeBanner";
+import { formatAiOcrPromptLabel } from "../utils/formatAiOcrPromptLabel";
 
 /**
  * AI 설정 페이지 — Vision API 연동 프로필 및 연동별 OCR 프롬프트 선택.
@@ -13,6 +15,7 @@ export default function AiSettingsPage() {
   const [connectionBusy, setConnectionBusy] = useState(false);
   const [testingConnectionId, setTestingConnectionId] = useState<number | null>(null);
   const [updatingPromptConnectionId, setUpdatingPromptConnectionId] = useState<number | null>(null);
+  const [updatingModelConnectionId, setUpdatingModelConnectionId] = useState<number | null>(null);
   const [message, setMessage] = useState<{ type: "ok" | "error"; text: string } | null>(null);
   const [settings, setSettings] = useState<AiOcrSettings | null>(null);
   const [connectionModalOpen, setConnectionModalOpen] = useState(false);
@@ -51,6 +54,24 @@ export default function AiSettingsPage() {
       });
     } finally {
       setConnectionBusy(false);
+    }
+  }
+
+  async function handleConnectionModelChange(connectionId: number, model: string) {
+    setUpdatingModelConnectionId(connectionId);
+    setMessage(null);
+    try {
+      await apiClient.updateAiOcrConnection(connectionId, { model });
+      const updated = await apiClient.getAiOcrSettings();
+      setSettings(updated);
+      setMessage({ type: "ok", text: "연동 AI 모델이 저장되었습니다." });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "모델 변경에 실패했습니다.",
+      });
+    } finally {
+      setUpdatingModelConnectionId(null);
     }
   }
 
@@ -127,8 +148,8 @@ export default function AiSettingsPage() {
           AI 설정
         </h2>
         <p className="page-lead">
-          이미지 OCR·아티클 변환에 사용할 AI 연동(API 키·모델)을 관리합니다. 연동마다 OCR
-          프롬프트를 지정할 수 있으며, 프롬프트 본문은 「프롬프트 관리」 메뉴에서 편집합니다.
+          이미지 OCR·아티클 변환에 사용할 AI 연동(API 키·모델)을 관리합니다. 테이블에서 모델·OCR
+          프롬프트를 바로 바꿀 수 있으며, 프롬프트 본문은 「프롬프트 관리」 메뉴에서 편집합니다.
         </p>
       </header>
 
@@ -163,8 +184,8 @@ export default function AiSettingsPage() {
             </button>
           </div>
           <p className="muted ai-settings-card-lead">
-            Gemini·OpenAI·AWS Bedrock 등을 여러 개 등록할 수 있습니다. 「프롬프트」 열에서 해당
-            연동이 OCR 시 사용할 템플릿을 선택하세요. 「사용」으로 OCR 분석에 쓸 연동을 지정합니다.
+            Gemini·OpenAI·AWS Bedrock 등을 여러 개 등록할 수 있습니다. 「AI 모델」「프롬프트」
+            열에서 바로 변경하고, 「사용」으로 OCR 분석에 쓸 연동을 지정합니다.
           </p>
 
           {settings?.connections.length === 0 ? (
@@ -181,6 +202,7 @@ export default function AiSettingsPage() {
                 <thead>
                   <tr style={{ borderBottom: "1px solid var(--color-border)", textAlign: "left" }}>
                     <th style={{ padding: "10px 8px" }}>연동</th>
+                    <th style={{ padding: "10px 8px", minWidth: 200 }}>AI 모델</th>
                     <th style={{ padding: "10px 8px", minWidth: 200 }}>OCR 프롬프트</th>
                     <th style={{ padding: "10px 8px" }}>키</th>
                     <th style={{ padding: "10px 8px" }}>상태</th>
@@ -192,6 +214,8 @@ export default function AiSettingsPage() {
                     const keyReady = connection.has_api_key;
                     const isTesting = testingConnectionId === connection.id;
                     const isUpdatingPrompt = updatingPromptConnectionId === connection.id;
+                    const isUpdatingModel = updatingModelConnectionId === connection.id;
+                    const modelOptions = modelOptionsForProvider(connection.provider);
                     const resolvedPromptId =
                       connection.prompt_template_id ?? defaultPromptId;
                     const promptSelectValue =
@@ -204,6 +228,27 @@ export default function AiSettingsPage() {
                         </td>
                         <td style={{ padding: "10px 8px" }}>
                           <select
+                            className="ai-settings-table-select"
+                            value={connection.model}
+                            disabled={connectionBusy || isUpdatingModel}
+                            onChange={(event) => {
+                              const nextModel = event.target.value;
+                              if (nextModel && nextModel !== connection.model) {
+                                void handleConnectionModelChange(connection.id, nextModel);
+                              }
+                            }}
+                            aria-label={`${connection.label} AI 모델`}
+                          >
+                            {modelOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td style={{ padding: "10px 8px" }}>
+                          <select
+                            className="ai-settings-table-select"
                             value={promptSelectValue}
                             disabled={
                               connectionBusy ||
@@ -216,15 +261,14 @@ export default function AiSettingsPage() {
                                 void handleConnectionPromptChange(connection.id, nextId);
                               }
                             }}
-                            style={{ width: "100%", maxWidth: 320 }}
+                            aria-label={`${connection.label} OCR 프롬프트`}
                           >
                             {promptTemplates.length === 0 ? (
                               <option value="">프롬프트 없음</option>
                             ) : null}
                             {promptTemplates.map((template) => (
                               <option key={template.id} value={String(template.id)}>
-                                {template.name}
-                                {template.is_builtin ? " · 기본" : ""}
+                                {formatAiOcrPromptLabel(template)}
                               </option>
                             ))}
                           </select>

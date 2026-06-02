@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { BarChart2, FileDown, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BarChart2, FileDown, Trash2, X } from "lucide-react";
 import { apiClient, type AiOcrAnalysisHistoryItem } from "../api/client";
 import LoadingPanel from "../components/LoadingPanel";
 import NoticeBanner from "../components/NoticeBanner";
@@ -42,6 +42,9 @@ export default function AiOcrMonitorPage() {
   const [message, setMessage] = useState<{ type: "error"; text: string } | null>(null);
   const [selectedItem, setSelectedItem] = useState<AiOcrAnalysisHistoryItem | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [deleting, setDeleting] = useState(false);
+  const headerCheckboxRef = useRef<HTMLInputElement>(null);
 
   const loadMetrics = useCallback(async () => {
     setLoading(true);
@@ -63,6 +66,82 @@ export default function AiOcrMonitorPage() {
   useEffect(() => {
     void loadMetrics();
   }, [loadMetrics]);
+
+  const visibleIds = useMemo(() => items.map((item) => item.id), [items]);
+
+  const allSelected =
+    items.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const someSelected =
+    visibleIds.some((id) => selectedIds.has(id)) && !allSelected;
+
+  useEffect(() => {
+    if (headerCheckboxRef.current) {
+      headerCheckboxRef.current.indeterminate = someSelected;
+    }
+  }, [someSelected]);
+
+  /** 목록 갱신 후 화면에 없는 ID는 선택에서 제거한다. */
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const visibleSet = new Set(visibleIds);
+      const next = new Set([...prev].filter((id) => visibleSet.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [visibleIds]);
+
+  const toggleSelectAll = useCallback(() => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds(new Set(visibleIds));
+  }, [allSelected, visibleIds]);
+
+  const toggleSelectOne = useCallback((id: number, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleDeleteSelected = useCallback(async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) {
+      return;
+    }
+    if (!window.confirm(`${ids.length}건의 호출 이력을 DB에서 삭제할까요?`)) {
+      return;
+    }
+    setDeleting(true);
+    setMessage(null);
+    try {
+      const result = await apiClient.deleteAiOcrHistory(ids);
+      if (result.deleted_count === 0) {
+        setMessage({
+          type: "error",
+          text: "삭제된 이력이 없습니다. 이미 제거되었을 수 있습니다.",
+        });
+        return;
+      }
+      setSelectedIds(new Set());
+      if (selectedItem && ids.includes(selectedItem.id)) {
+        setSelectedItem(null);
+      }
+      await loadMetrics();
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "선택한 호출 이력을 삭제하지 못했습니다.",
+      });
+    } finally {
+      setDeleting(false);
+    }
+  }, [loadMetrics, selectedIds, selectedItem]);
 
   const handleExportExcel = useCallback((rows: AiOcrAnalysisHistoryItem[], fileName?: string) => {
     if (rows.length === 0) {
@@ -107,6 +186,8 @@ export default function AiOcrMonitorPage() {
       avgLatencyMs: avgLatency === null ? "-" : `${Math.round(avgLatency).toLocaleString("ko-KR")} ms`,
     };
   }, [items]);
+
+  const selectedCount = selectedIds.size;
 
   return (
     <section className="page ai-ocr-monitor-page">
@@ -159,6 +240,15 @@ export default function AiOcrMonitorPage() {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
                   type="button"
+                  className="icon-button icon-button--danger"
+                  disabled={selectedCount === 0 || deleting}
+                  onClick={() => void handleDeleteSelected()}
+                >
+                  <Trash2 size={16} aria-hidden="true" />
+                  {deleting ? "삭제 중…" : `선택 삭제 (${selectedCount})`}
+                </button>
+                <button
+                  type="button"
                   className="icon-button"
                   disabled={items.length === 0 || exporting}
                   onClick={() => handleExportExcel(items)}
@@ -185,22 +275,35 @@ export default function AiOcrMonitorPage() {
             ) : (
               <div style={{ overflowX: "auto" }}>
                 <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: 14,
-                  }}
+                  className="ai-ocr-monitor-table"
+                  style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}
                 >
                   <thead>
                     <tr style={{ borderBottom: "1px solid var(--color-border)", textAlign: "left" }}>
+                      <th className="ai-ocr-monitor-check-col">
+                        <label className="form-checkbox-label form-checkbox-label--table">
+                          <input
+                            ref={headerCheckboxRef}
+                            type="checkbox"
+                            checked={allSelected}
+                            onChange={toggleSelectAll}
+                            aria-label="전체 선택"
+                          />
+                        </label>
+                      </th>
                       <th style={{ padding: "10px 8px" }}>일시</th>
                       <th style={{ padding: "10px 8px" }}>라벨</th>
                       <th style={{ padding: "10px 8px" }}>모델</th>
                       <th style={{ padding: "10px 8px" }}>프롬프트 ID</th>
                       <th style={{ padding: "10px 8px" }}>이미지 크기</th>
+                      <th style={{ padding: "10px 8px" }}>전처리</th>
+                      <th style={{ padding: "10px 8px" }}>전처리 후(KB)</th>
                       <th style={{ padding: "10px 8px" }}>입력 토큰</th>
                       <th style={{ padding: "10px 8px" }}>출력 토큰</th>
-                      <th style={{ padding: "10px 8px" }} title="Gemini thoughts 등 내부 추론. Bedrock·OpenAI 일반 호출은 0">
+                      <th
+                        style={{ padding: "10px 8px" }}
+                        title="Gemini thoughts 등 내부 추론. Bedrock·OpenAI 일반 호출은 0"
+                      >
                         추론 토큰
                       </th>
                       <th style={{ padding: "10px 8px" }}>총 토큰</th>
@@ -210,49 +313,84 @@ export default function AiOcrMonitorPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item) => (
-                      <tr
-                        key={item.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => setSelectedItem(item)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            setSelectedItem(item);
-                          }
-                        }}
-                        style={{
-                          borderBottom: "1px solid var(--color-border)",
-                          cursor: "pointer",
-                          background:
-                            selectedItem?.id === item.id ? "rgba(99, 102, 241, 0.08)" : undefined,
-                        }}
-                      >
-                        <td style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>
-                          {formatLocalDateTime(item.created_at)}
-                        </td>
-                        <td style={{ padding: "10px 8px" }}>{item.display_label ?? item.label}</td>
-                        <td style={{ padding: "10px 8px" }}>{item.ai_model ?? "-"}</td>
-                        <td style={{ padding: "10px 8px" }}>{item.prompt_template_id ?? "-"}</td>
-                        <td style={{ padding: "10px 8px" }}>
-                          {item.image_size_kb != null ? `${item.image_size_kb} KB` : "-"}
-                        </td>
-                        <td style={{ padding: "10px 8px" }}>{formatTokenCount(item.input_tokens)}</td>
-                        <td style={{ padding: "10px 8px" }}>{formatTokenCount(item.output_tokens)}</td>
-                        <td style={{ padding: "10px 8px" }}>
-                          {formatThinkingTokenCount(item.thinking_tokens)}
-                        </td>
-                        <td style={{ padding: "10px 8px" }}>{formatTokenCount(item.total_tokens)}</td>
-                        <td style={{ padding: "10px 8px" }}>
-                          {item.latency_ms != null ? `${item.latency_ms} ms` : "-"}
-                        </td>
-                        <td style={{ padding: "10px 8px" }}>{item.finish_reason ?? "-"}</td>
-                        <td style={{ padding: "10px 8px" }}>
-                          {item.parse_success === true ? "✅" : item.parse_success === false ? "❌" : "-"}
-                        </td>
-                      </tr>
-                    ))}
+                    {items.map((item) => {
+                      const isRowSelected = selectedIds.has(item.id);
+                      return (
+                        <tr
+                          key={item.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setSelectedItem(item)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setSelectedItem(item);
+                            }
+                          }}
+                          style={{
+                            borderBottom: "1px solid var(--color-border)",
+                            cursor: "pointer",
+                            background:
+                              selectedItem?.id === item.id ? "rgba(99, 102, 241, 0.08)" : undefined,
+                          }}
+                        >
+                          <td
+                            className="ai-ocr-monitor-check-col"
+                            onClick={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
+                          >
+                            <label className="form-checkbox-label form-checkbox-label--table">
+                              <input
+                                type="checkbox"
+                                checked={isRowSelected}
+                                onChange={(event) =>
+                                  toggleSelectOne(item.id, event.target.checked)
+                                }
+                                aria-label={`${item.display_label ?? item.label} 선택`}
+                              />
+                            </label>
+                          </td>
+                          <td style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>
+                            {formatLocalDateTime(item.created_at)}
+                          </td>
+                          <td style={{ padding: "10px 8px" }}>{item.display_label ?? item.label}</td>
+                          <td style={{ padding: "10px 8px" }}>{item.ai_model ?? "-"}</td>
+                          <td style={{ padding: "10px 8px" }}>{item.prompt_template_id ?? "-"}</td>
+                          <td style={{ padding: "10px 8px" }}>
+                            {item.image_size_kb != null ? `${item.image_size_kb} KB` : "-"}
+                          </td>
+                          <td style={{ padding: "10px 8px" }}>
+                            {item.preprocessed === true
+                              ? "✅"
+                              : item.preprocessed === false
+                                ? "❌"
+                                : "-"}
+                          </td>
+                          <td style={{ padding: "10px 8px" }}>
+                            {item.processed_image_size_kb != null
+                              ? `${item.processed_image_size_kb} KB`
+                              : "-"}
+                          </td>
+                          <td style={{ padding: "10px 8px" }}>{formatTokenCount(item.input_tokens)}</td>
+                          <td style={{ padding: "10px 8px" }}>{formatTokenCount(item.output_tokens)}</td>
+                          <td style={{ padding: "10px 8px" }}>
+                            {formatThinkingTokenCount(item.thinking_tokens)}
+                          </td>
+                          <td style={{ padding: "10px 8px" }}>{formatTokenCount(item.total_tokens)}</td>
+                          <td style={{ padding: "10px 8px" }}>
+                            {item.latency_ms != null ? `${item.latency_ms} ms` : "-"}
+                          </td>
+                          <td style={{ padding: "10px 8px" }}>{item.finish_reason ?? "-"}</td>
+                          <td style={{ padding: "10px 8px" }}>
+                            {item.parse_success === true
+                              ? "✅"
+                              : item.parse_success === false
+                                ? "❌"
+                                : "-"}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

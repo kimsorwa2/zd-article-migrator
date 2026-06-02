@@ -9,7 +9,11 @@ import time
 
 import httpx
 
-from services.ai_model_options import DEFAULT_BEDROCK_REGION
+from services.ai_model_options import (
+    DEFAULT_BEDROCK_REGION,
+    bedrock_to_foundation_model_id,
+    resolve_bedrock_runtime_region,
+)
 from services.article_from_image import GEMINI_API_BASE
 from services.bedrock_runtime import bedrock_converse, mask_bedrock_api_key
 
@@ -142,17 +146,19 @@ def test_bedrock_connection(
      * @returns (성공 여부, 메시지, 지연 ms)
      */
     """
+    foundation = bedrock_to_foundation_model_id(model)
+    runtime_region = resolve_bedrock_runtime_region(aws_region, foundation)
     t_start = time.perf_counter()
     logger.info(
-        "Bedrock 연결 테스트 시작 | region=%s | model=%s | key=%s",
-        aws_region,
+        "Bedrock 연결 테스트 시작 | runtime_region=%s | model=%s | key=%s",
+        runtime_region,
         model,
         mask_bedrock_api_key(api_key),
     )
     try:
         response = bedrock_converse(
             api_key=api_key,
-            region=aws_region,
+            region=runtime_region,
             model_id=model,
             messages=[
                 {

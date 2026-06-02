@@ -7,6 +7,7 @@ import {
 } from "../api/client";
 import LoadingPanel from "../components/LoadingPanel";
 import NoticeBanner from "../components/NoticeBanner";
+import { formatAiOcrPromptLabel } from "../utils/formatAiOcrPromptLabel";
 
 /** 새 프롬프트 작성 모드 식별자 */
 const NEW_PROMPT_ID = "new" as const;
@@ -222,8 +223,8 @@ export default function AiPromptManagePage() {
           프롬프트 관리
         </h2>
         <p className="page-lead">
-          이미지 OCR·아티클 변환에 쓸 Vision 프롬프트 템플릿을 등록·수정합니다. AI 설정 화면에서 각 AI
-          연동마다 사용할 프롬프트를 선택할 수 있습니다.
+          이미지 OCR·아티클 변환에 쓸 Vision 프롬프트 템플릿을 등록·수정합니다. 이름은 중복해도 되며
+          ID(#번호)로 구분합니다. AI 설정에서 연동마다 사용할 프롬프트를 선택할 수 있습니다.
         </p>
       </header>
 
@@ -261,8 +262,7 @@ export default function AiPromptManagePage() {
               </option>
               {settings?.prompt_templates.map((template) => (
                 <option key={template.id} value={String(template.id)}>
-                  {template.name}
-                  {template.is_builtin ? " · 기본" : ""}
+                  {formatAiOcrPromptLabel(template)}
                 </option>
               ))}
               <option value={NEW_PROMPT_ID}>+ 새 프롬프트 작성</option>
@@ -272,7 +272,10 @@ export default function AiPromptManagePage() {
           {isNewPromptMode ? (
             <p className="muted ai-settings-prompt-badge">새 프롬프트 작성 중</p>
           ) : selectedTemplate ? (
-            <p className="muted ai-settings-prompt-badge">편집 중 — 저장 후 AI 설정에서 연동에 연결하세요</p>
+            <p className="muted ai-settings-prompt-badge">
+              편집 중 — ID #{selectedTemplate.id}
+              {selectedTemplate.is_builtin ? " · 기본 프롬프트(이름·설명만 저장 가능)" : ""}
+            </p>
           ) : null}
 
           <label>
@@ -281,8 +284,8 @@ export default function AiPromptManagePage() {
               type="text"
               value={promptName}
               onChange={(event) => setPromptName(event.target.value)}
-              placeholder="예: 가전 매뉴얼용"
-              disabled={selectedTemplate?.is_builtin}
+              placeholder="예: 가전 매뉴얼용 (동일 이름 가능)"
+              disabled={selectedPromptId === ""}
             />
           </label>
 
@@ -292,8 +295,8 @@ export default function AiPromptManagePage() {
               type="text"
               value={promptDescription}
               onChange={(event) => setPromptDescription(event.target.value)}
-              placeholder="용도 메모"
-              disabled={selectedTemplate?.is_builtin}
+              placeholder="용도·버전 메모"
+              disabled={selectedPromptId === ""}
             />
           </label>
 
@@ -330,7 +333,8 @@ export default function AiPromptManagePage() {
 
           {selectedTemplate?.is_builtin ? (
             <p className="muted ai-ocr-settings-hint">
-              기본 프롬프트는 읽기 전용입니다. 복사 후 새 프롬프트로 저장하세요.
+              기본 프롬프트 본문(시스템·사용자)은 읽기 전용입니다. 이름·설명만 수정하거나, 복사 후 새
+              프롬프트로 저장하세요.
             </p>
           ) : null}
 

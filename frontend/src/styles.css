@@ -598,6 +598,16 @@ body {
   background: #eef2ff;
 }
 
+.icon-button.icon-button--danger {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.icon-button.icon-button--danger:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1390,6 +1400,73 @@ button:disabled {
 }
 
 /* 폼용 label { display: grid } / input { width: 100% } 전역 규칙 무효화 */
+.form-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: #475569;
+  cursor: pointer;
+}
+
+.form-checkbox-label input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  min-height: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: #6366f1;
+}
+
+.form-checkbox-label.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.form-checkbox-label.is-disabled input[type="checkbox"] {
+  cursor: not-allowed;
+}
+
+.form-checkbox-label .muted {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+/* AI 호출 이력 테이블 체크박스 열 */
+.form-checkbox-label.form-checkbox-label--table {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  gap: 0;
+  cursor: pointer;
+}
+
+.form-checkbox-label.form-checkbox-label--table input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  accent-color: #2563eb;
+}
+
+.ai-ocr-monitor-table th.ai-ocr-monitor-check-col,
+.ai-ocr-monitor-table td.ai-ocr-monitor-check-col {
+  width: 44px;
+  padding: 10px 8px;
+  vertical-align: middle;
+  text-align: center;
+}
+
 .migrate-auto-resync-label input[type="checkbox"] {
   width: 1rem;
   height: 1rem;
@@ -2200,6 +2277,16 @@ button:disabled {
   font-size: 14px;
 }
 
+.ai-settings-table-select {
+  width: 100%;
+  min-width: 180px;
+  max-width: 280px;
+  margin: 0;
+  padding: 8px 2.25rem 8px 10px;
+  font-size: 14px;
+  font-weight: 400;
+}
+
 .ai-settings-card-header-row {
   display: flex;
   align-items: center;
@@ -2307,7 +2394,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 100%;
+  min-height: 0;
 }
 
 .ai-ocr-file-input {
@@ -2360,11 +2447,11 @@ button:disabled {
 }
 
 .ai-ocr-preview-pane {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: var(--ai-ocr-media-height);
+  min-height: 0;
 }
 
 .ai-ocr-preview-pane-empty {
@@ -2403,6 +2490,14 @@ button:disabled {
 
 .ai-ocr-preview-pane-loading {
   flex-direction: column;
+}
+
+.ai-ocr-preview-pane-content {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
 }
 
 .ai-ocr-cute-spinner-wrap {
@@ -2518,6 +2613,7 @@ button:disabled {
   display: grid;
   gap: 8px;
   margin: 0;
+  flex-shrink: 0;
 }
 
 .ai-ocr-preview-meta > div {
@@ -2612,10 +2708,8 @@ button:disabled {
 .ai-ocr-preview-body {
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
-  height: var(--ai-ocr-media-height);
-  max-height: var(--ai-ocr-media-height);
-  min-height: var(--ai-ocr-media-height);
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
 }
 

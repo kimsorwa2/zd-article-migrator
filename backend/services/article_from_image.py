@@ -19,7 +19,9 @@ from services.ai_model_options import (
     DEFAULT_GEMINI_MODEL,
     DEFAULT_OPENAI_MODEL,
     gemini_supports_thinking,
+    bedrock_to_foundation_model_id,
     resolve_bedrock_model,
+    resolve_bedrock_runtime_region,
     resolve_gemini_model,
     resolve_openai_model,
 )
@@ -29,6 +31,7 @@ from services.ai_usage_metrics import (
     normalize_openai_usage,
     normalize_usage_metrics_dict,
 )
+from services.image_preprocess import apply_ocr_image_preprocessing
 
 if TYPE_CHECKING:
     from services.ai_ocr_log import AiOcrLogCollector
@@ -393,6 +396,14 @@ def image_to_article(image_path: str, provider: AiVisionProvider, api_key: str) 
     )
 
 
+def _attach_preprocess_metrics(result: dict, preprocess_meta: dict[str, object]) -> dict:
+    """Vision API 결과 _metrics에 전처리 메타를 병합한다."""
+    metrics = dict(result.get("_metrics") or {})
+    metrics.update(preprocess_meta)
+    result["_metrics"] = normalize_usage_metrics_dict(metrics)  # type: ignore[assignment]
+    return result
+
+
 def image_bytes_to_article(
     image_bytes: bytes,
     filename: str,
@@ -406,41 +417,73 @@ def image_bytes_to_article(
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     user_prompt: str = DEFAULT_USER_PROMPT,
     log: AiOcrLogCollector | None = None,
+    preprocess: bool = True,
 ) -> dict:
     """
     /**
      * 선택한 AI 제공자로 Vision API를 호출해 아티클 JSON을 생성한다.
+     * @param preprocess True면 OCR 전 업스케일·대비·선명도·PNG 통일 전처리를 적용한다.
      */
     """
+    preprocess_result = apply_ocr_image_preprocessing(
+        image_bytes,
+        media_type,
+        filename,
+        enabled=preprocess,
+    )
+    vision_bytes = preprocess_result.image_bytes
+    vision_media_type = preprocess_result.media_type
+    preprocess_meta: dict[str, object] = {
+        "preprocessed": preprocess_result.preprocessed,
+        "original_size_kb": preprocess_result.original_size_kb,
+        "processed_size_kb": preprocess_result.processed_size_kb,
+    }
+    if preprocess_result.skipped_reason:
+        preprocess_meta["preprocess_skipped_reason"] = preprocess_result.skipped_reason
+
+    if log is not None and preprocess:
+        if preprocess_result.preprocessed:
+            log.info(
+                "이미지 전처리 적용",
+                f"{preprocess_result.original_size_kb}KB → {preprocess_result.processed_size_kb}KB (PNG)",
+            )
+        elif preprocess_result.skipped_reason and preprocess_result.skipped_reason != "disabled":
+            log.info(
+                "이미지 전처리 생략",
+                f"사유: {preprocess_result.skipped_reason} — 원본 {preprocess_result.original_size_kb}KB 사용",
+            )
+
     if provider == "gemini":
-        return image_bytes_to_article_gemini(
-            image_bytes,
+        result = image_bytes_to_article_gemini(
+            vision_bytes,
             filename,
-            media_type,
+            vision_media_type,
             gemini_api_key=api_key,
             model=resolve_gemini_model(model),
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             log=log,
         )
+        return _attach_preprocess_metrics(result, preprocess_meta)
     if provider == "openai":
-        return image_bytes_to_article_openai(
-            image_bytes,
+        result = image_bytes_to_article_openai(
+            vision_bytes,
             filename,
-            media_type,
+            vision_media_type,
             openai_api_key=api_key,
             model=resolve_openai_model(model),
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             log=log,
         )
+        return _attach_preprocess_metrics(result, preprocess_meta)
     if provider == "bedrock":
         if not api_key:
             raise ValueError("AWS Bedrock API 키가 필요합니다.")
-        return image_bytes_to_article_bedrock(
-            image_bytes,
+        result = image_bytes_to_article_bedrock(
+            vision_bytes,
             filename,
-            media_type,
+            vision_media_type,
             bedrock_api_key=api_key,
             model=resolve_bedrock_model(model, aws_region),
             aws_region=aws_region or DEFAULT_BEDROCK_REGION,
@@ -448,6 +491,7 @@ def image_bytes_to_article(
             user_prompt=user_prompt,
             log=log,
         )
+        return _attach_preprocess_metrics(result, preprocess_meta)
     raise ValueError(f"지원하지 않는 AI 제공자입니다: {provider}")
 
 
@@ -486,15 +530,20 @@ def image_bytes_to_article_bedrock(
     t_start = time.perf_counter()
     image_size_kb = max(1, len(image_bytes) // 1024)
     image_format = _bedrock_image_format(media_type)
+    foundation = bedrock_to_foundation_model_id(model)
+    runtime_region = resolve_bedrock_runtime_region(aws_region, foundation)
 
     if log is not None:
+        region_lines = [f"bedrock-runtime 리전={runtime_region}"]
+        if runtime_region != aws_region:
+            region_lines.append(f"연동 AWS 리전={aws_region}")
         log.info(
             "Bedrock Vision 요청",
             "\n".join(
                 [
                     "인증: Bedrock API key (Bearer)",
                     f"converse modelId={model}",
-                    f"region={aws_region}",
+                    *region_lines,
                     f"key={mask_bedrock_api_key(bedrock_api_key)}",
                     f"파일: {filename}",
                     f"이미지: {media_type}, {image_size_kb}KB",
@@ -505,7 +554,7 @@ def image_bytes_to_article_bedrock(
     try:
         response = bedrock_converse(
             api_key=bedrock_api_key,
-            region=aws_region,
+            region=runtime_region,
             model_id=model,
             system=[{"text": system_prompt}],
             messages=[

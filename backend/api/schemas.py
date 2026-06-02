@@ -951,6 +951,8 @@ class AiOcrAnalysisHistoryItem(BaseModel):
     body_preview_text: str
     prompt_template_id: int | None = None
     image_size_kb: int | None = None
+    preprocessed: bool | None = None
+    processed_image_size_kb: int | None = None
     latency_ms: int | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
@@ -970,6 +972,18 @@ class AiOcrAnalysisHistoryListResponse(BaseModel):
     """OCR 분석 이력 목록."""
 
     items: list[AiOcrAnalysisHistoryItem] = Field(default_factory=list)
+
+
+class AiOcrAnalysisHistoryDeleteRequest(BaseModel):
+    """OCR 분석 이력 일괄 삭제 요청."""
+
+    ids: list[int] = Field(min_length=1)
+
+
+class AiOcrAnalysisHistoryDeleteResponse(BaseModel):
+    """OCR 분석 이력 일괄 삭제 결과."""
+
+    deleted_count: int = Field(ge=0)
 
 
 class AiOcrCreateArticleRequest(BaseModel):

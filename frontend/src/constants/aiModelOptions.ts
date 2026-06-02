@@ -6,6 +6,13 @@ export interface AiModelOption {
   label: string;
 }
 
+const CLAUDE_HAIKU_45 = "anthropic.claude-haiku-4-5-20251001-v1:0";
+const CLAUDE_SONNET_45 = "anthropic.claude-sonnet-4-5-20250929-v1:0";
+const CLAUDE_SONNET_37 = "anthropic.claude-3-7-sonnet-20250219-v1:0";
+
+const AU_SOURCE_REGIONS = new Set(["ap-southeast-2", "ap-southeast-4", "ap-southeast-6"]);
+const JP_SOURCE_REGIONS = new Set(["ap-northeast-1", "ap-northeast-3"]);
+
 /** Gemini Vision 모델 (백엔드 ai_model_options.py와 동기화) */
 export const GEMINI_MODEL_OPTIONS: AiModelOption[] = [
   { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro (권장·복잡 표/매뉴얼)" },
@@ -24,18 +31,40 @@ export const OPENAI_MODEL_OPTIONS: AiModelOption[] = [
 
 /**
  * AWS Bedrock Vision 모델 (foundation model ID).
- * ap-northeast-2 등 APAC 리전 호출 시 백엔드가 apac.* inference profile ID로 자동 변환한다.
+ * inference profile ID는 bedrockInferenceProfileId()로 리전·모델별 변환한다.
  */
 export const BEDROCK_MODEL_OPTIONS: AiModelOption[] = [
-  { value: "amazon.nova-pro-v1:0", label: "Amazon Nova Pro (권장)" },
-  { value: "amazon.nova-lite-v1:0", label: "Amazon Nova Lite" },
-  { value: "anthropic.claude-3-5-sonnet-20241022-v2:0", label: "Claude 3.5 Sonnet v2" },
-  { value: "anthropic.claude-3-haiku-20240307-v1:0", label: "Claude 3 Haiku" },
+  {
+    value: CLAUDE_SONNET_45,
+    label: "Claude Sonnet 4.5 (권장·서울 등 APAC → global 프로필)",
+  },
+  {
+    value: CLAUDE_HAIKU_45,
+    label: "Claude Haiku 4.5 (서울 등 APAC → global 프로필)",
+  },
+  {
+    value: CLAUDE_SONNET_37,
+    label: "Claude 3.7 Sonnet (cross-region inference profile)",
+  },
+  { value: "anthropic.claude-3-5-sonnet-20241022-v2:0", label: "Claude 3.5 Sonnet v2 (구형)" },
 ];
 
 /**
- * AWS 리전에 맞는 Bedrock inference profile 접두사를 반환한다.
- * @param awsRegion 예: ap-northeast-2, us-east-1
+ * inference profile / foundation ID에서 foundation model ID만 추출한다.
+ */
+export function bedrockToFoundationModelId(modelId: string): string {
+  const cleaned = modelId.trim();
+  const prefixes = ["global.", "apac.", "us.", "eu.", "au.", "jp."];
+  for (const prefix of prefixes) {
+    if (cleaned.startsWith(prefix)) {
+      return cleaned.slice(prefix.length);
+    }
+  }
+  return cleaned;
+}
+
+/**
+ * Claude 3.x·3.7 등 apac·us·eu Geo 프로필용 접두사.
  */
 export function bedrockInferenceProfilePrefix(awsRegion: string): string {
   const region = awsRegion.trim().toLowerCase();
@@ -49,25 +78,46 @@ export function bedrockInferenceProfilePrefix(awsRegion: string): string {
 }
 
 /**
- * foundation model ID를 Bedrock Converse API용 inference profile ID로 변환한다.
- * @param foundationModel foundation model ID (셀렉트 value)
- * @param awsRegion Bedrock 호출 리전
+ * Bedrock Converse API용 inference profile model ID (백엔드 resolve_bedrock_model과 동일 로직).
  */
 export function bedrockInferenceProfileId(foundationModel: string, awsRegion: string): string {
-  const raw = foundationModel.trim();
-  const stripped = raw.replace(/^(us|eu|apac)\./, "");
-  const prefix = bedrockInferenceProfilePrefix(awsRegion);
-  return `${prefix}.${stripped}`;
+  const foundation = bedrockToFoundationModelId(foundationModel);
+  const region = awsRegion.trim().toLowerCase() || DEFAULT_BEDROCK_REGION;
+
+  if (foundation === CLAUDE_HAIKU_45 || foundation === CLAUDE_SONNET_45) {
+    if (region.startsWith("us-")) {
+      return `us.${foundation}`;
+    }
+    if (region.startsWith("eu-")) {
+      return `eu.${foundation}`;
+    }
+    if (AU_SOURCE_REGIONS.has(region)) {
+      return `au.${foundation}`;
+    }
+    if (JP_SOURCE_REGIONS.has(region)) {
+      return `jp.${foundation}`;
+    }
+    return `global.${foundation}`;
+  }
+
+  const prefix = bedrockInferenceProfilePrefix(region);
+  return `${prefix}.${foundation}`;
+}
+
+/**
+ * bedrock-runtime 엔드포인트 리전 (연동 AWS 리전과 동일).
+ */
+export function bedrockRuntimeRegion(_foundationModel: string, awsRegion: string): string {
+  return awsRegion.trim().toLowerCase() || DEFAULT_BEDROCK_REGION;
 }
 
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro";
 export const DEFAULT_OPENAI_MODEL = "gpt-4o";
-export const DEFAULT_BEDROCK_MODEL = "amazon.nova-pro-v1:0";
+export const DEFAULT_BEDROCK_MODEL = "anthropic.claude-sonnet-4-5-20250929-v1:0";
 export const DEFAULT_BEDROCK_REGION = "ap-northeast-2";
 
 /**
  * 제공자별 모델 옵션 목록을 반환한다.
- * @param provider AI 제공자
  */
 export function modelOptionsForProvider(provider: AiOcrProvider): AiModelOption[] {
   if (provider === "openai") {

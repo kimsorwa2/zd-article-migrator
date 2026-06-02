@@ -114,6 +114,7 @@ async def get_image_convert_article_image_preview(
 @router.post("/analyze", response_model=ImageConvertAnalyzeResponse)
 async def analyze_image_convert_article(
     payload: ImageConvertAnalyzeRequest,
+    preprocess: bool = Query(default=True, description="OCR 전 이미지 전처리 적용 여부"),
     session: AsyncSession = Depends(get_async_session),
 ) -> ImageConvertAnalyzeResponse:
     """
@@ -126,6 +127,7 @@ async def analyze_image_convert_article(
             session,
             source_instance_id=payload.source_instance_id,
             article_id=payload.article_id,
+            preprocess=preprocess,
         )
     except AiOcrServiceError as error:
         raise _http_error(
@@ -153,6 +155,7 @@ async def analyze_image_convert_article_with_files(
         description="업로드 파일이 대체할 본문 이미지 인덱스(쉼표 구분, 예: 0 또는 0,1)",
     ),
     files: list[UploadFile] = File(..., description="로컬 이미지 파일(인덱스 순서와 동일)"),
+    preprocess: bool = Query(default=True, description="OCR 전 이미지 전처리 적용 여부"),
     session: AsyncSession = Depends(get_async_session),
 ) -> ImageConvertAnalyzeResponse:
     """
@@ -198,6 +201,7 @@ async def analyze_image_convert_article_with_files(
             source_instance_id=source_instance_id,
             article_id=article_id,
             image_overrides=overrides,
+            preprocess=preprocess,
         )
     except AiOcrServiceError as error:
         raise _http_error(

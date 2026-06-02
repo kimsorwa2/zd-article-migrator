@@ -7,8 +7,10 @@ import {
   type AiOcrProvider,
 } from "../api/client";
 import { AI_PROVIDER_OPTIONS } from "./AiOcrSettingsModal";
+import { formatAiOcrPromptLabel } from "../utils/formatAiOcrPromptLabel";
 import {
   bedrockInferenceProfileId,
+  bedrockRuntimeRegion,
   DEFAULT_BEDROCK_MODEL,
   DEFAULT_BEDROCK_REGION,
   DEFAULT_GEMINI_MODEL,
@@ -183,11 +185,15 @@ export default function AiOcrConnectionModal({
 
           {provider === "bedrock" ? (
             <p className="muted ai-ocr-settings-hint" style={{ gridColumn: "1 / -1", margin: 0 }}>
-              실제 API 호출 ID (리전 {awsRegion.trim() || DEFAULT_BEDROCK_REGION}):{" "}
+              inference profile ID:{" "}
               <code>
                 {bedrockInferenceProfileId(model, awsRegion.trim() || DEFAULT_BEDROCK_REGION)}
               </code>
-              {" — "}Nova·Claude는 foundation model ID 직접 호출이 불가하여 백엔드가 inference profile로 변환합니다.
+              <br />
+              bedrock-runtime 리전:{" "}
+              <code>{bedrockRuntimeRegion(model, awsRegion.trim() || DEFAULT_BEDROCK_REGION)}</code>
+              {" — "}
+              Haiku/Sonnet 4.5는 서울 등 APAC에서 global.* 프로필, 3.7/3.5는 apac.* 등 cross-region 프로필을 씁니다.
             </p>
           ) : null}
 
@@ -206,8 +212,7 @@ export default function AiOcrConnectionModal({
                 </option>
                 {promptTemplates.map((template) => (
                   <option key={template.id} value={String(template.id)}>
-                    {template.name}
-                    {template.is_builtin ? " · 기본" : ""}
+                    {formatAiOcrPromptLabel(template)}
                   </option>
                 ))}
               </select>

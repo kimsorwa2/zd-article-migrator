@@ -63,6 +63,7 @@ export default function ConvertImagePage({ instances }: ConvertImagePageProps) {
   const [aiSettingsLoading, setAiSettingsLoading] = useState(true);
   const [providerSaving, setProviderSaving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [preprocess, setPreprocess] = useState(true);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<ImageConvertAnalyzeResult | null>(null);
   const [editMode, setEditMode] = useState<EditMode>("none");
@@ -376,10 +377,12 @@ export default function ConvertImagePage({ instances }: ConvertImagePageProps) {
               article_id: selectedArticleId,
               image_indices: overrideIndices,
               files: overrideIndices.map((index) => localImageFiles[index]),
+              preprocess,
             })
           : await apiClient.analyzeImageConvertArticle({
               source_instance_id: sourceInstanceId,
               article_id: selectedArticleId,
+              preprocess,
             });
       appendWorkLogs(result.logs ?? []);
       setDraft(result);
@@ -752,6 +755,16 @@ export default function ConvertImagePage({ instances }: ConvertImagePageProps) {
             </label>
           ) : null}
 
+          <label className={`form-checkbox-label${analyzing ? " is-disabled" : ""}`}>
+            <input
+              type="checkbox"
+              checked={preprocess}
+              onChange={(event) => setPreprocess(event.target.checked)}
+              disabled={analyzing}
+            />
+            <span>OCR 전 이미지 전처리 (업스케일·대비·선명도)</span>
+          </label>
+
           <button
             type="button"
             className="button-primary"
@@ -787,7 +800,7 @@ export default function ConvertImagePage({ instances }: ConvertImagePageProps) {
                 <p className="muted">OCR 변환 결과가 여기에 표시됩니다.</p>
               </div>
             ) : (
-              <>
+              <div className="ai-ocr-preview-pane-content">
                 <dl className="ai-ocr-preview-meta">
                   <div>
                     <dt>소스 아티클</dt>
@@ -820,7 +833,7 @@ export default function ConvertImagePage({ instances }: ConvertImagePageProps) {
                   <p className="ai-ocr-preview-body-title">본문 미리보기</p>
                   <AiOcrHtmlPreview htmlBody={draft.html_body} />
                 </div>
-              </>
+              </div>
             )}
           </div>
 

@@ -211,6 +211,8 @@ class AiOcrAnalysisHistory(Base):
     body_preview_text: Mapped[str] = mapped_column(Text, nullable=False)
     prompt_template_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     image_size_kb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    preprocessed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    processed_image_size_kb: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

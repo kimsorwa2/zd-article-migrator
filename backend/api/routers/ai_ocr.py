@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.schemas import (
+    AiOcrAnalysisHistoryDeleteRequest,
+    AiOcrAnalysisHistoryDeleteResponse,
     AiOcrAnalysisHistoryListResponse,
     AiOcrAnalyzeResponse,
     AiOcrConnectionCreateRequest,
@@ -311,9 +313,24 @@ async def get_ai_ocr_history_metrics(
     return AiOcrAnalysisHistoryListResponse(items=items)
 
 
+@router.delete("/history", response_model=AiOcrAnalysisHistoryDeleteResponse)
+async def delete_ai_ocr_history(
+    payload: AiOcrAnalysisHistoryDeleteRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> AiOcrAnalysisHistoryDeleteResponse:
+    """
+    /**
+     * 선택한 OCR 분석 이력 행을 DB에서 삭제한다.
+     */
+    """
+    deleted_count = await AiOcrService.delete_analysis_history_by_ids(session, ids=payload.ids)
+    return AiOcrAnalysisHistoryDeleteResponse(deleted_count=deleted_count)
+
+
 @router.post("/analyze", response_model=AiOcrAnalyzeResponse)
 async def analyze_manual_image(
     file: UploadFile = File(...),
+    preprocess: bool = Query(default=True, description="OCR 전 이미지 전처리(업스케일·대비·선명도) 적용 여부"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AiOcrAnalyzeResponse:
     """
@@ -338,6 +355,7 @@ async def analyze_manual_image(
             session,
             filename=file.filename,
             content=content,
+            preprocess=preprocess,
         )
     except AiOcrServiceError as error:
         raise _http_error(
