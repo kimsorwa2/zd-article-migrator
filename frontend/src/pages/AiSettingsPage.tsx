@@ -192,8 +192,10 @@ export default function AiSettingsPage() {
                     const keyReady = connection.has_api_key;
                     const isTesting = testingConnectionId === connection.id;
                     const isUpdatingPrompt = updatingPromptConnectionId === connection.id;
-                    const promptValue =
-                      connection.prompt_template_id ?? defaultPromptId ?? "";
+                    const resolvedPromptId =
+                      connection.prompt_template_id ?? defaultPromptId;
+                    const promptSelectValue =
+                      resolvedPromptId != null ? String(resolvedPromptId) : "";
 
                     return (
                       <tr key={connection.id} style={{ borderBottom: "1px solid var(--color-border)" }}>
@@ -202,7 +204,7 @@ export default function AiSettingsPage() {
                         </td>
                         <td style={{ padding: "10px 8px" }}>
                           <select
-                            value={promptValue === "" ? "" : String(promptValue)}
+                            value={promptSelectValue}
                             disabled={
                               connectionBusy ||
                               isUpdatingPrompt ||
