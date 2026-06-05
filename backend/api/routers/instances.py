@@ -6,126 +6,121 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.schemas import (
     ConnectionTestResponse,
-    CreateInstanceRequest,
-    CreateSourceInstanceRequest,
-    CreateTargetInstanceRequest,
     InstanceDetailResponse,
     InstanceResponse,
+    OAuthConnectRequest,
     SourceBrandPreviewRequest,
     SourceBrandResponse,
-    SourceInstanceResponse,
-    UpdateInstanceRequest,
     UpdateInstanceActiveRequest,
+    UpdateInstanceRequest,
 )
-
-INSTANCE_ROLE = "zendesk"
 from db.database import get_async_session
 from db.models import Brand, Instance
 from services.fetch_progress import FetchProgressTracker
-from services.zendesk_client import ZendeskClient, ZendeskClientError
+from services.zendesk_oauth_credentials import (
+    ZendeskOAuthClientConfig,
+    ZendeskOAuthError,
+    apply_client_config_to_instance,
+    build_client_config,
+    config_from_instance,
+)
+from services.zendesk_oauth_service import ZendeskOAuthService, ZendeskOAuthTokens
+from services.zendesk_client import ZendeskClientError
+
+INSTANCE_ROLE = "zendesk"
 
 router = APIRouter(prefix="/instances", tags=["instances"])
 
 
 def normalize_subdomain(raw_subdomain: str) -> str:
-    """
-    /**
-     * 입력된 서브도메인 문자열을 API 처리용 표준 형태로 정규화한다.
-     * @param {str} raw_subdomain 사용자가 입력한 서브도메인 문자열
-     * @returns {str} ".zendesk.com" 접미사가 제거된 서브도메인
-     */
-    """
+    """입력 서브도메인에서 .zendesk.com 접미사를 제거한다."""
     return raw_subdomain.strip().replace(".zendesk.com", "")
 
 
 def resolve_instance_name(name: str | None, subdomain: str) -> str:
-    """
-    /**
-     * 인스턴스 저장 시 사용할 최종 이름을 결정한다.
-     * @param {str | None} name 사용자가 입력한 인스턴스 이름
-     * @param {str} subdomain 정규화된 Zendesk 서브도메인
-     * @returns {str} 이름 입력값 또는 서브도메인 기반 기본 이름
-     */
-    """
+    """인스턴스 저장용 표시 이름을 결정한다."""
     if name is not None and name.strip():
         return name.strip()
-
     if "." in subdomain:
         return subdomain.split(".", maxsplit=1)[0].strip()
-
     return subdomain.strip()
 
 
-@router.get("/health")
-async def health_check() -> dict[str, str]:
-    """
-    /**
-     * 인스턴스 라우터의 연결 상태를 확인한다.
-     * @returns {dict[str, str]} 라우터 상태 메시지
-     */
-    """
-    return {"message": "instances router is ready"}
+def to_instance_response(instance: Instance) -> InstanceResponse:
+    """DB Instance → API 응답(OAuth 연결·클라이언트 설정 여부 포함)."""
+    base = InstanceResponse.model_validate(instance)
+    connected = bool(instance.oauth_access_token.strip())
+    client_configured = bool(instance.oauth_client_id.strip() and instance.oauth_client_secret.strip())
+    return base.model_copy(
+        update={
+            "oauth_connected": connected,
+            "oauth_client_configured": client_configured,
+            "oauth_client_id": instance.oauth_client_id,
+            "oauth_redirect_uri": instance.oauth_redirect_uri,
+            "oauth_scopes": instance.oauth_scopes,
+        },
+    )
 
 
-@router.post("/brands/preview", response_model=list[SourceBrandResponse])
-async def preview_instance_brands(payload: SourceBrandPreviewRequest) -> list[SourceBrandResponse]:
+async def _resolve_connect_client_config(
+    session: AsyncSession,
+    payload: OAuthConnectRequest,
+) -> ZendeskOAuthClientConfig:
     """
-    /**
-     * 인증값으로 Zendesk 브랜드 목록을 미리 조회한다.
-     * @param {SourceBrandPreviewRequest} payload Zendesk 인증 요청 데이터
-     * @returns {list[SourceBrandResponse]} 선택 가능한 브랜드 목록
-     */
+    Client Credentials 연결 시 사용할 OAuth 클라이언트 설정을 결정한다.
+    재연결(instance_id)이면 폼 입력을 우선하고, Secret만 비어 있으면 DB 값을 쓴다.
     """
-    return await preview_source_brands(payload)
+    if payload.instance_id is None:
+        try:
+            return build_client_config(
+                client_id=payload.oauth_client_id,
+                client_secret=payload.oauth_client_secret,
+                scopes=payload.oauth_scopes,
+            )
+        except ZendeskOAuthError as error:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
+    instance = await session.get(Instance, payload.instance_id)
+    if instance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="인스턴스를 찾을 수 없습니다.")
 
-@router.post("/source/brands/preview", response_model=list[SourceBrandResponse])
-async def preview_source_brands(payload: SourceBrandPreviewRequest) -> list[SourceBrandResponse]:
-    """
-    /**
-     * 소스 인스턴스 인증값으로 브랜드 목록을 미리 조회한다.
-     * @param {SourceBrandPreviewRequest} payload 소스 Zendesk 인증 요청 데이터
-     * @returns {list[SourceBrandResponse]} 선택 가능한 브랜드 목록
-     */
-    """
+    if normalize_subdomain(instance.subdomain) != normalize_subdomain(payload.subdomain):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="서브도메인이 인스턴스와 일치하지 않습니다.",
+        )
+
+    client_id = payload.oauth_client_id.strip() or instance.oauth_client_id.strip()
+    client_secret = payload.oauth_client_secret.strip() or instance.oauth_client_secret.strip()
+    scopes_raw = (payload.oauth_scopes or "").strip() or instance.oauth_scopes.strip()
+
     try:
-        brands = await ZendeskClient.get_brands(
-            main_subdomain=payload.subdomain,
-            email=payload.email,
-            api_token=payload.api_token,
+        return build_client_config(
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=scopes_raw or None,
         )
-    except ZendeskClientError as error:
+    except ZendeskOAuthError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
-
-    return [
-        SourceBrandResponse(
-            id=0,
-            a_brand_id=brand.id,
-            name=brand.name,
-            subdomain=brand.subdomain,
-            has_help_center=brand.has_help_center,
-        )
-        for brand in brands
-    ]
 
 
 async def _create_instance_with_brands(
     session: AsyncSession,
-    payload: CreateInstanceRequest,
+    *,
+    subdomain: str,
+    email: str,
+    client_config,
+    tokens: ZendeskOAuthTokens | None = None,
+    name: str | None = None,
+    selected_brand_ids: list[int] | None = None,
 ) -> InstanceDetailResponse:
-    """
-    /**
-     * Zendesk 인스턴스를 생성하고 브랜드 목록을 함께 저장한다.
-     * @param {AsyncSession} session 비동기 DB 세션
-     * @param {CreateInstanceRequest} payload 인스턴스 생성 요청 데이터
-     * @returns {InstanceDetailResponse} 생성된 인스턴스 상세 정보
-     */
-    """
-    normalized_subdomain = normalize_subdomain(payload.subdomain)
+    """OAuth 클라이언트·토큰·이메일로 인스턴스를 생성하고 브랜드를 저장한다."""
+    normalized_subdomain = normalize_subdomain(subdomain)
+    selected = set(selected_brand_ids or [])
 
     duplicate_query = select(Instance).where(
         Instance.subdomain == normalized_subdomain,
-        Instance.email == payload.email,
+        Instance.email == email,
     )
     duplicate = await session.scalar(duplicate_query)
     if duplicate is not None:
@@ -134,30 +129,31 @@ async def _create_instance_with_brands(
             detail="이미 등록된 인스턴스입니다.",
         )
 
-    try:
-        brands = await ZendeskClient.get_brands(
-            main_subdomain=normalized_subdomain,
-            email=payload.email,
-            api_token=payload.api_token,
-        )
-    except ZendeskClientError as error:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
-
-    selected_brand_ids = set(payload.selected_brand_ids)
     instance = Instance(
-        name=resolve_instance_name(payload.name, normalized_subdomain),
+        name=resolve_instance_name(name, normalized_subdomain),
         subdomain=normalized_subdomain,
-        email=payload.email,
-        api_token=payload.api_token,
+        email=email,
+        oauth_access_token="",
+        oauth_refresh_token="",
         role=INSTANCE_ROLE,
         is_active=True,
     )
+    apply_client_config_to_instance(instance, client_config)
     session.add(instance)
     await session.flush()
 
+    if tokens is not None:
+        ZendeskOAuthService.apply_tokens_to_instance(instance, tokens)
+
+    try:
+        zendesk_brands = await ZendeskOAuthService.get_brands(session, instance)
+    except (ZendeskClientError, ZendeskOAuthError) as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
     brand_rows: list[Brand] = []
-    for brand in brands:
-        is_selected = brand.id in selected_brand_ids if selected_brand_ids else True
+    for brand in zendesk_brands:
+        is_selected = brand.id in selected if selected else True
         brand_row = Brand(
             instance_id=instance.id,
             a_brand_id=brand.id,
@@ -173,7 +169,7 @@ async def _create_instance_with_brands(
     await session.refresh(instance)
 
     return InstanceDetailResponse(
-        **InstanceResponse.model_validate(instance).model_dump(),
+        **to_instance_response(instance).model_dump(),
         brands=[
             SourceBrandResponse(
                 id=row.id,
@@ -187,78 +183,114 @@ async def _create_instance_with_brands(
     )
 
 
-@router.post("", response_model=InstanceDetailResponse, status_code=status.HTTP_201_CREATED)
-async def create_instance(
-    payload: CreateInstanceRequest,
+@router.get("/health")
+async def health_check() -> dict[str, str]:
+    return {"message": "instances router is ready"}
+
+
+@router.post("/oauth/connect", response_model=InstanceDetailResponse)
+async def connect_oauth_client_credentials(
+    payload: OAuthConnectRequest,
     session: AsyncSession = Depends(get_async_session),
 ) -> InstanceDetailResponse:
-    """
-    /**
-     * Zendesk 인스턴스를 생성하고 브랜드 목록을 함께 저장한다.
-     * @param {CreateInstanceRequest} payload 인스턴스/인증 정보 및 선택 브랜드 ID
-     * @param {AsyncSession} session 비동기 DB 세션
-     * @returns {InstanceDetailResponse} 생성된 인스턴스 상세 정보
-     */
-    """
-    return await _create_instance_with_brands(session=session, payload=payload)
+    """Client Credentials로 토큰을 발급하고 인스턴스를 생성하거나 갱신한다."""
+    normalized = normalize_subdomain(payload.subdomain)
+    try:
+        client_config = await _resolve_connect_client_config(session, payload)
+        tokens = await ZendeskOAuthService.exchange_client_credentials(
+            subdomain=normalized,
+            client_config=client_config,
+        )
+        profile = await ZendeskOAuthService.fetch_user_profile(
+            subdomain=normalized,
+            access_token=tokens.access_token,
+        )
+    except ZendeskOAuthError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
+    if payload.instance_id is not None and payload.instance_id > 0:
+        instance = await session.get(Instance, payload.instance_id)
+        if instance is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="인스턴스를 찾을 수 없습니다.")
+        if normalize_subdomain(instance.subdomain) != normalized:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="서브도메인이 인스턴스와 일치하지 않습니다.",
+            )
+        apply_client_config_to_instance(instance, client_config)
+        ZendeskOAuthService.apply_tokens_to_instance(instance, tokens)
+        instance.email = profile.email
+        if payload.name:
+            instance.name = resolve_instance_name(payload.name, normalized)
+        await session.commit()
+        await session.refresh(instance)
+        brands_query = select(Brand).where(Brand.instance_id == instance.id).order_by(Brand.name.asc())
+        brands = (await session.execute(brands_query)).scalars().all()
+        return InstanceDetailResponse(
+            **to_instance_response(instance).model_dump(),
+            brands=[
+                SourceBrandResponse(
+                    id=brand.id,
+                    a_brand_id=brand.a_brand_id,
+                    name=brand.name,
+                    subdomain=brand.subdomain,
+                    has_help_center=brand.has_help_center,
+                )
+                for brand in brands
+            ],
+        )
 
-@router.post("/source", response_model=SourceInstanceResponse, status_code=status.HTTP_201_CREATED)
-async def create_source_instance(
-    payload: CreateSourceInstanceRequest,
-    session: AsyncSession = Depends(get_async_session),
-) -> SourceInstanceResponse:
-    """
-    /**
-     * 소스 인스턴스를 생성하고 Zendesk 브랜드 목록을 함께 저장한다.
-     * @param {CreateSourceInstanceRequest} payload 인스턴스/인증 정보 및 선택 브랜드 ID
-     * @param {AsyncSession} session 비동기 DB 세션
-     * @returns {SourceInstanceResponse} 생성된 소스 인스턴스 상세 정보
-     */
-    """
-    detail = await _create_instance_with_brands(session=session, payload=payload)
-    return SourceInstanceResponse.model_validate(detail.model_dump())
-
-
-@router.post("/target", response_model=InstanceResponse, status_code=status.HTTP_201_CREATED)
-async def create_target_instance(
-    payload: CreateTargetInstanceRequest,
-    session: AsyncSession = Depends(get_async_session),
-) -> InstanceResponse:
-    """
-    /**
-     * 타겟 인스턴스를 생성하기 전에 Zendesk 계정 연결을 검증한다.
-     * @param {CreateTargetInstanceRequest} payload 타겟 인스턴스 생성 요청 데이터
-     * @param {AsyncSession} session 비동기 DB 세션
-     * @returns {InstanceResponse} 생성된 타겟 인스턴스 정보
-     */
-    """
-    normalized_subdomain = normalize_subdomain(payload.subdomain)
-
-    create_payload = CreateInstanceRequest(
+    return await _create_instance_with_brands(
+        session,
+        subdomain=normalized,
+        email=profile.email,
+        client_config=client_config,
+        tokens=tokens,
         name=payload.name,
-        subdomain=payload.subdomain,
-        email=payload.email,
-        api_token=payload.api_token,
-        selected_brand_ids=[],
+        selected_brand_ids=payload.selected_brand_ids,
     )
-    detail = await _create_instance_with_brands(session=session, payload=create_payload)
-    return InstanceResponse.model_validate(detail.model_dump())
+
+
+@router.post("/brands/preview", response_model=list[SourceBrandResponse])
+async def preview_instance_brands(
+    payload: SourceBrandPreviewRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> list[SourceBrandResponse]:
+    instance = await session.get(Instance, payload.instance_id)
+    if instance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="인스턴스를 찾을 수 없습니다.")
+
+    try:
+        brands = await ZendeskOAuthService.get_brands(session, instance)
+    except (ZendeskClientError, ZendeskOAuthError) as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    return [
+        SourceBrandResponse(
+            id=0,
+            a_brand_id=brand.id,
+            name=brand.name,
+            subdomain=brand.subdomain,
+            has_help_center=brand.has_help_center,
+        )
+        for brand in brands
+    ]
+
+
+@router.post("/source/brands/preview", response_model=list[SourceBrandResponse])
+async def preview_source_brands(
+    payload: SourceBrandPreviewRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> list[SourceBrandResponse]:
+    return await preview_instance_brands(payload, session)
 
 
 @router.get("", response_model=list[InstanceResponse])
 async def list_instances(session: AsyncSession = Depends(get_async_session)) -> list[InstanceResponse]:
-    """
-    /**
-     * 등록된 인스턴스 목록을 조회한다.
-     * @param {AsyncSession} session 비동기 DB 세션
-     * @returns {list[InstanceResponse]} 인스턴스 목록
-     */
-    """
     query = select(Instance).order_by(Instance.created_at.desc())
     result = await session.execute(query)
     instances = result.scalars().all()
-    return [InstanceResponse.model_validate(instance) for instance in instances]
+    return [to_instance_response(instance) for instance in instances]
 
 
 @router.get("/{instance_id}", response_model=InstanceDetailResponse)
@@ -266,24 +298,15 @@ async def get_instance(
     instance_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> InstanceDetailResponse:
-    """
-    /**
-     * 인스턴스 단건 상세를 조회한다.
-     * @param {int} instance_id 조회할 인스턴스 ID
-     * @param {AsyncSession} session 비동기 DB 세션
-     * @returns {InstanceDetailResponse} 인스턴스 상세 정보
-     */
-    """
     instance = await session.get(Instance, instance_id)
     if instance is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="인스턴스를 찾을 수 없습니다.")
 
     brands_query = select(Brand).where(Brand.instance_id == instance.id).order_by(Brand.name.asc())
-    brands_result = await session.execute(brands_query)
-    brands = brands_result.scalars().all()
+    brands = (await session.execute(brands_query)).scalars().all()
 
     return InstanceDetailResponse(
-        **InstanceResponse.model_validate(instance).model_dump(),
+        **to_instance_response(instance).model_dump(),
         brands=[
             SourceBrandResponse(
                 id=brand.id,
@@ -303,51 +326,44 @@ async def update_instance(
     payload: UpdateInstanceRequest,
     session: AsyncSession = Depends(get_async_session),
 ) -> InstanceResponse:
-    """
-    /**
-     * 인스턴스의 이름/이메일/API 토큰을 수정하고 연결 유효성을 검증한다.
-     * @param {int} instance_id 수정할 인스턴스 ID
-     * @param {UpdateInstanceRequest} payload 수정 요청 데이터
-     * @param {AsyncSession} session 비동기 DB 세션
-     * @returns {InstanceResponse} 수정 후 인스턴스 정보
-     */
-    """
     instance = await session.get(Instance, instance_id)
     if instance is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="인스턴스를 찾을 수 없습니다.")
 
-    duplicate_query = select(Instance).where(
-        Instance.subdomain == instance.subdomain,
-        Instance.email == payload.email,
-        Instance.id != instance_id,
-    )
-    duplicate = await session.scalar(duplicate_query)
-    if duplicate is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="동일한 이메일의 인스턴스가 이미 등록되어 있습니다.",
-        )
+    if payload.name is not None:
+        instance.name = resolve_instance_name(payload.name, instance.subdomain)
 
-    next_api_token = instance.api_token
-    if payload.api_token is not None and payload.api_token.strip():
-        next_api_token = payload.api_token.strip()
+    if payload.email is not None:
+        normalized_email = payload.email.strip()
+        if not normalized_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="연결 계정(이메일)을 입력하세요.",
+            )
+        if normalized_email != instance.email:
+            duplicate_query = select(Instance).where(
+                Instance.subdomain == instance.subdomain,
+                Instance.email == normalized_email,
+                Instance.id != instance_id,
+            )
+            duplicate = await session.scalar(duplicate_query)
+            if duplicate is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="같은 서브도메인에 동일 이메일 인스턴스가 이미 있습니다.",
+                )
+            instance.email = normalized_email
 
-    try:
-        await ZendeskClient.get_brands(
-            main_subdomain=instance.subdomain,
-            email=payload.email,
-            api_token=next_api_token,
-        )
-    except ZendeskClientError as error:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    if payload.oauth_client_id is not None and payload.oauth_client_id.strip():
+        instance.oauth_client_id = payload.oauth_client_id.strip()
+    if payload.oauth_client_secret is not None and payload.oauth_client_secret.strip():
+        instance.oauth_client_secret = payload.oauth_client_secret.strip()
+    if payload.oauth_scopes is not None:
+        instance.oauth_scopes = payload.oauth_scopes.strip()
 
-    instance.name = resolve_instance_name(payload.name, instance.subdomain)
-    instance.email = payload.email
-    instance.api_token = next_api_token
     await session.commit()
     await session.refresh(instance)
-
-    return InstanceResponse.model_validate(instance)
+    return to_instance_response(instance)
 
 
 @router.patch("/{instance_id}/active", response_model=InstanceResponse)
@@ -356,15 +372,6 @@ async def update_instance_active(
     payload: UpdateInstanceActiveRequest,
     session: AsyncSession = Depends(get_async_session),
 ) -> InstanceResponse:
-    """
-    /**
-     * 인스턴스 활성 상태를 변경한다.
-     * @param {int} instance_id 변경 대상 인스턴스 ID
-     * @param {UpdateInstanceActiveRequest} payload 활성 상태 변경 값
-     * @param {AsyncSession} session 비동기 DB 세션
-     * @returns {InstanceResponse} 변경 후 인스턴스 정보
-     */
-    """
     instance = await session.get(Instance, instance_id)
     if instance is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="인스턴스를 찾을 수 없습니다.")
@@ -372,8 +379,7 @@ async def update_instance_active(
     instance.is_active = payload.is_active
     await session.commit()
     await session.refresh(instance)
-
-    return InstanceResponse.model_validate(instance)
+    return to_instance_response(instance)
 
 
 @router.post("/{instance_id}/connection-test", response_model=ConnectionTestResponse)
@@ -381,28 +387,17 @@ async def test_instance_connection(
     instance_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> ConnectionTestResponse:
-    """
-    /**
-     * 저장된 인스턴스 인증값으로 Zendesk 연결 테스트를 수행한다.
-     * @param {int} instance_id 연결을 점검할 인스턴스 ID
-     * @param {AsyncSession} session 비동기 DB 세션
-     * @returns {ConnectionTestResponse} 연결 테스트 결과
-     */
-    """
     instance = await session.get(Instance, instance_id)
     if instance is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="인스턴스를 찾을 수 없습니다.")
 
     try:
-        await ZendeskClient.get_brands(
-            main_subdomain=instance.subdomain,
-            email=instance.email,
-            api_token=instance.api_token,
-        )
-    except ZendeskClientError as error:
+        config_from_instance(instance)
+        await ZendeskOAuthService.get_brands(session, instance)
+    except (ZendeskClientError, ZendeskOAuthError) as error:
         return ConnectionTestResponse(success=False, message=str(error))
 
-    return ConnectionTestResponse(success=True, message="연결 테스트에 성공했습니다.")
+    return ConnectionTestResponse(success=True, message="OAuth 연결 테스트에 성공했습니다.")
 
 
 @router.delete("/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -410,14 +405,6 @@ async def delete_instance(
     instance_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> None:
-    """
-    /**
-     * 인스턴스와 연관된 수집·매핑 데이터를 DB에서 함께 삭제한다(CASCADE).
-     * @param {int} instance_id 삭제할 인스턴스 ID
-     * @param {AsyncSession} session 비동기 DB 세션
-     * @returns {None} 성공 시 본문 없음(204)
-     */
-    """
     if FetchProgressTracker.is_running(instance_id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

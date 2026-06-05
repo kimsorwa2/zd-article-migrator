@@ -5,7 +5,7 @@ import FetchDataTree from "../components/FetchDataTree";
 import LoadingPanel from "../components/LoadingPanel";
 import NoticeBanner from "../components/NoticeBanner";
 import SyncProgressPanel from "../components/SyncProgressPanel";
-import InstanceForm from "../components/InstanceForm";
+import InstanceForm, { type InstanceOAuthFormValues } from "../components/InstanceForm";
 import StatusBadge from "../components/StatusBadge";
 import { useTimedNotice } from "../hooks/useTimedNotice";
 
@@ -29,7 +29,6 @@ export default function InstancesPage() {
   const [selectedInstanceId, setSelectedInstanceId] = useState<number>(0);
   const [detail, setDetail] = useState<FetchDetailResponse | null>(null);
   const { message, noticeVariant, setMessage, clearMessage } = useTimedNotice();
-  const [syncError, setSyncError] = useState("");
   const [formError, setFormError] = useState("");
   const [editFormError, setEditFormError] = useState("");
   const [editingInstance, setEditingInstance] = useState<Instance | null>(null);
@@ -96,37 +95,84 @@ export default function InstancesPage() {
   }, []);
 
   useEffect(() => {
+    function handleInstancesRefresh() {
+      void loadInstances();
+    }
+    window.addEventListener("zd:instances-refresh", handleInstancesRefresh);
+    return () => window.removeEventListener("zd:instances-refresh", handleInstancesRefresh);
+  }, []);
+
+  useEffect(() => {
     void loadDetail(selectedInstanceId);
   }, [selectedInstanceId, loadDetail]);
 
+  /** 다른 인스턴스를 선택하면 이전 인스턴스의 수집 진행·실패 패널을 숨긴다. */
   useEffect(() => {
-    setSyncError("");
+    setSyncProgress((current) => {
+      if (!current || current.instance_id === selectedInstanceId) {
+        return current;
+      }
+      return null;
+    });
   }, [selectedInstanceId]);
 
-  async function handleCreateInstance(payload: {
-    name: string;
-    subdomain: string;
-    email: string;
-    api_token: string;
-  }) {
+  /**
+   * Client Credentials로 Zendesk OAuth 토큰을 발급하고 인스턴스를 생성·갱신한다.
+   */
+  async function handleConnectOAuth(payload: InstanceOAuthFormValues, options?: { instanceId?: number }) {
+    const normalized = parseSubdomain(payload.subdomain);
+    if (!normalized) {
+      throw new Error("서브도메인을 입력하세요.");
+    }
+    await apiClient.connectOAuth({
+      subdomain: normalized,
+      name: payload.name,
+      oauth_client_id: payload.oauth_client_id,
+      oauth_client_secret: payload.oauth_client_secret,
+      oauth_scopes: payload.oauth_scopes || undefined,
+      instance_id: options?.instanceId,
+    });
+  }
+
+  async function handleConnectOAuthForCreate(payload: InstanceOAuthFormValues) {
     try {
-      const brands = await apiClient.previewBrands({
-        subdomain: parseSubdomain(payload.subdomain),
-        email: payload.email,
-        api_token: payload.api_token,
-      });
-      const created = await apiClient.createInstance({
-        ...payload,
-        subdomain: parseSubdomain(payload.subdomain),
-        selected_brand_ids: brands.map((brand) => brand.a_brand_id),
-      });
-      setMessage(`인스턴스 저장 완료 (브랜드 ${brands.length}개)`);
+      await handleConnectOAuth(payload);
       setFormError("");
+      setShowCreateForm(false);
       await loadInstances();
-      setSelectedInstanceId(created.id);
+      setMessage("Zendesk OAuth 연결이 완료되었습니다.", { variant: "success" });
+      window.dispatchEvent(new CustomEvent("zd:instances-refresh"));
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "인스턴스 저장 실패";
+      const errorMessage = error instanceof Error ? error.message : "OAuth 연결 실패";
       setFormError(errorMessage);
+      setMessage(errorMessage, { variant: "error" });
+      throw error;
+    }
+  }
+
+  /**
+   * 인스턴스 메타·연결 계정·OAuth 클라이언트 설정을 저장한다(OAuth 재연결 없음).
+   */
+  /**
+   * 수정 폼 값을 저장한 뒤 Client Credentials로 OAuth 토큰을 재발급한다.
+   */
+  async function handleSaveAndReconnect(instance: Instance, payload: InstanceOAuthFormValues) {
+    try {
+      await apiClient.updateInstance(instance.id, {
+        name: payload.name,
+        email: payload.email,
+        oauth_client_id: payload.oauth_client_id,
+        oauth_client_secret: payload.oauth_client_secret || undefined,
+        oauth_scopes: payload.oauth_scopes,
+      });
+      await handleConnectOAuth(payload, { instanceId: instance.id });
+      closeEditModal();
+      await loadInstances();
+      setMessage("인스턴스 저장 및 Zendesk OAuth 연결이 완료되었습니다.", { variant: "success" });
+      setEditFormError("");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "저장·Zendesk 연결 실패";
+      setEditFormError(errorMessage);
       setMessage(errorMessage, { variant: "error" });
       throw error;
     }
@@ -167,7 +213,8 @@ export default function InstancesPage() {
    * @param brandId 지정 시 해당 브랜드만 수집, 생략 시 선택된 전체 브랜드 수집
    */
   async function runInstanceSync(brandId?: number) {
-    if (!selectedInstanceId) {
+    const syncingInstanceId = selectedInstanceId;
+    if (!syncingInstanceId) {
       setMessage("인스턴스를 먼저 선택하세요.", { variant: "error" });
       return;
     }
@@ -175,10 +222,9 @@ export default function InstancesPage() {
     const brandLabel =
       brandId !== undefined ? (detail?.brands.find((brand) => brand.id === brandId)?.name ?? "브랜드") : null;
 
-    setSyncError("");
     setSyncingBrandId(brandId ?? null);
     setSyncProgress({
-      instance_id: selectedInstanceId,
+      instance_id: syncingInstanceId,
       status: "running",
       percent: 0,
       message: brandLabel ? `「${brandLabel}」 수집을 시작합니다...` : "전체 브랜드 수집을 시작합니다...",
@@ -197,11 +243,11 @@ export default function InstancesPage() {
     setIsSyncing(true);
     try {
       if (brandId !== undefined) {
-        await apiClient.syncInstanceBrand(selectedInstanceId, brandId);
+        await apiClient.syncInstanceBrand(syncingInstanceId, brandId);
       } else {
-        await apiClient.syncInstance(selectedInstanceId);
+        await apiClient.syncInstance(syncingInstanceId);
       }
-      const finalProgress = await waitForSyncCompletion(selectedInstanceId);
+      const finalProgress = await waitForSyncCompletion(syncingInstanceId);
       setSyncProgress(finalProgress);
       const processedBrands = finalProgress.result?.processed_brands ?? 0;
       const warningCount = finalProgress.warnings?.length ?? 0;
@@ -219,13 +265,12 @@ export default function InstancesPage() {
         );
       }
       await loadInstances();
-      await loadDetail(selectedInstanceId);
+      if (selectedInstanceId === syncingInstanceId) {
+        await loadDetail(syncingInstanceId);
+      }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Help Center 수집 실패";
-      setSyncError(errorMessage);
-      setMessage(errorMessage, { variant: "error" });
       try {
-        const failedProgress = await apiClient.getSyncProgress(selectedInstanceId);
+        const failedProgress = await apiClient.getSyncProgress(syncingInstanceId);
         setSyncProgress(failedProgress);
       } catch {
         // 폴링 실패 시 기존 진행 상태 유지
@@ -250,38 +295,6 @@ export default function InstancesPage() {
       await loadInstances();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "상태 변경 실패", { variant: "error" });
-    }
-  }
-
-  async function handleUpdateInstance(
-    instanceId: number,
-    payload: {
-      name: string;
-      subdomain: string;
-      email: string;
-      api_token: string;
-    },
-  ) {
-    try {
-      const updatePayload: { name: string; email: string; api_token?: string } = {
-        name: payload.name,
-        email: payload.email,
-      };
-      if (payload.api_token.trim().length > 0) {
-        updatePayload.api_token = payload.api_token.trim();
-      }
-      await apiClient.updateInstance(instanceId, updatePayload);
-      setMessage("인스턴스 정보 수정 완료");
-      setEditFormError("");
-      await loadInstances();
-      if (selectedInstanceId === instanceId) {
-        await loadDetail(instanceId);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "인스턴스 수정 실패";
-      setEditFormError(errorMessage);
-      setMessage(errorMessage, { variant: "error" });
-      throw error;
     }
   }
 
@@ -334,14 +347,14 @@ export default function InstancesPage() {
   }
 
   return (
-    <section className="page">
+    <section className="page page-instances">
       <header className="page-top">
         <h2 className="page-title">
           <Database size={22} aria-hidden="true" />
           인스턴스 관리
         </h2>
         <p className="page-lead">
-          Zendesk 계정을 등록하고 Help Center 데이터를 수집합니다. 마이그레이션 시 등록된 인스턴스 중에서 소스와 타겟을 선택합니다.
+          Zendesk OAuth(Client Credentials)로 계정을 연결하고 Help Center 데이터를 수집합니다. 마이그레이션 시 등록된 인스턴스 중에서 소스와 타겟을 선택합니다.
         </p>
       </header>
       {message ? <NoticeBanner message={message} variant={noticeVariant} onDismiss={clearMessage} /> : null}
@@ -362,12 +375,13 @@ export default function InstancesPage() {
               추가
             </button>
           </div>
-          {isLoading ? <LoadingPanel message="인스턴스 리스트를 불러오는 중..." /> : null}
-          {!isLoading && instances.length === 0 ? <p className="muted">등록된 인스턴스가 없습니다.</p> : null}
-          <div className="instance-list">
-            {instances.map((instance) => {
-              const isSelected = selectedInstanceId === instance.id;
-              return (
+          <div className="instances-list-body">
+            {isLoading ? <LoadingPanel message="인스턴스 리스트를 불러오는 중..." /> : null}
+            {!isLoading && instances.length === 0 ? <p className="muted">등록된 인스턴스가 없습니다.</p> : null}
+            <div className="instance-list">
+              {instances.map((instance) => {
+                const isSelected = selectedInstanceId === instance.id;
+                return (
                 <div
                   key={instance.id}
                   className={`instance-list-row${isSelected ? " is-selected" : ""}`}
@@ -429,8 +443,9 @@ export default function InstancesPage() {
                     </button>
                   </div>
                 </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -455,19 +470,10 @@ export default function InstancesPage() {
                 </button>
               </div>
 
-              {syncProgress ? (
+              {syncProgress && syncProgress.instance_id === selectedInstanceId ? (
                 <SyncProgressPanel
                   progress={syncProgress}
                   onDismiss={() => setSyncProgress(null)}
-                />
-              ) : null}
-
-              {syncError ? (
-                <NoticeBanner
-                  message={syncError}
-                  variant="error"
-                  className="instance-sync-error"
-                  onDismiss={() => setSyncError("")}
                 />
               ) : null}
 
@@ -522,13 +528,13 @@ export default function InstancesPage() {
                 <X size={16} aria-hidden="true" />
               </button>
             </div>
-            <InstanceForm
-              submitError={formError}
-              onSubmit={async (payload) => {
-                await handleCreateInstance(payload);
-                setShowCreateForm(false);
-              }}
-            />
+            <div className="modal-body">
+              <InstanceForm
+                submitError={formError}
+                oauthLabel="Zendesk 연결하고 인스턴스 추가"
+                onOAuthConnect={handleConnectOAuthForCreate}
+              />
+            </div>
           </div>
         </div>
       ) : null}
@@ -545,23 +551,25 @@ export default function InstancesPage() {
                 <X size={16} aria-hidden="true" />
               </button>
             </div>
-            <InstanceForm
-              submitError={editFormError}
-              submitLabel="수정 저장"
-              subdomainDisabled
-              apiTokenRequired={false}
-              tokenPlaceholder="변경할 때만 입력 (비우면 유지)"
-              initialValues={{
-                name: editingInstance.name,
-                subdomain: editingInstance.subdomain,
-                email: editingInstance.email,
-                apiToken: "",
-              }}
-              onSubmit={async (payload) => {
-                await handleUpdateInstance(editingInstance.id, payload);
-                closeEditModal();
-              }}
-            />
+            <div className="modal-body">
+              <InstanceForm
+                submitError={editFormError}
+                oauthLabel="저장하고 Zendesk 연결"
+                subdomainDisabled
+                secretOptional
+                emailEditable
+                initialValues={{
+                  name: editingInstance.name,
+                  subdomain: editingInstance.subdomain,
+                  email: editingInstance.email,
+                  oauth_client_id: editingInstance.oauth_client_id,
+                  oauth_scopes: editingInstance.oauth_scopes || "read write",
+                }}
+                onOAuthConnect={async (payload) => {
+                  await handleSaveAndReconnect(editingInstance, payload);
+                }}
+              />
+            </div>
           </div>
         </div>
       ) : null}

@@ -150,6 +150,7 @@ export default function AiOcrConnectionModal({
           </button>
         </div>
 
+        <div className="modal-body">
         <p className="muted" style={{ marginTop: 0 }}>
           같은 AI 제공자라도 계정·API 키가 다르면 여러 개 등록할 수 있습니다.
         </p>
@@ -284,6 +285,7 @@ export default function AiOcrConnectionModal({
           <button type="button" className="button-ghost" disabled={saving} onClick={onClose}>
             취소
           </button>
+        </div>
         </div>
       </div>
     </div>

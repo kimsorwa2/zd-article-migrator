@@ -6,31 +6,32 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ZendeskCredentialRequest(BaseModel):
+class OAuthConnectRequest(BaseModel):
     """
     /**
-     * Zendesk 인증에 필요한 공통 입력 값을 정의한다.
-     * @param {str} subdomain Zendesk 서브도메인
-     * @param {str} email Zendesk 계정 이메일
-     * @param {str} api_token Zendesk API 토큰
-     * @returns {None} 요청 스키마이므로 반환값 없음
+     * Zendesk Client Credentials OAuth 연결 요청.
+     * confidential OAuth 클라이언트 Identifier·Secret으로 백엔드에서 토큰을 발급한다.
      */
     """
 
     subdomain: str = Field(min_length=1, max_length=255)
-    email: str = Field(min_length=1, max_length=255)
-    api_token: str = Field(min_length=1, max_length=255)
+    oauth_client_id: str = Field(min_length=1, max_length=255)
+    oauth_client_secret: str = Field(min_length=1, max_length=2048)
+    oauth_scopes: str | None = Field(default=None, max_length=255)
+    name: str | None = Field(default=None, max_length=255)
+    instance_id: int | None = Field(default=None, ge=1)
+    selected_brand_ids: list[int] = Field(default_factory=list)
 
 
-class SourceBrandPreviewRequest(ZendeskCredentialRequest):
+class SourceBrandPreviewRequest(BaseModel):
     """
     /**
-     * 소스 인스턴스 브랜드 미리보기 요청 스키마를 정의한다.
-     * @returns {None} 요청 스키마이므로 반환값 없음
+     * 저장된 OAuth 토큰으로 브랜드 목록을 미리 본다.
+     * @param {int} instance_id 인스턴스 ID
      */
     """
 
-    pass
+    instance_id: int = Field(ge=1)
 
 
 class SourceBrandResponse(BaseModel):
@@ -53,17 +54,17 @@ class SourceBrandResponse(BaseModel):
     has_help_center: bool = True
 
 
-class CreateInstanceRequest(ZendeskCredentialRequest):
+class CreateInstanceRequest(BaseModel):
     """
     /**
-     * Zendesk 인스턴스 생성 요청 스키마를 정의한다.
-     * @param {str} name 화면에서 사용할 인스턴스 별칭
-     * @param {list[int]} selected_brand_ids 저장 시 선택 처리할 브랜드 ID 목록
-     * @returns {None} 요청 스키마이므로 반환값 없음
+     * @deprecated OAuth connect로 인스턴스가 생성됩니다. 하위 호환용 스키마.
      */
     """
 
     name: str | None = Field(default=None, max_length=255)
+    subdomain: str = Field(min_length=1, max_length=255)
+    email: str = Field(min_length=1, max_length=255)
+    api_token: str = Field(min_length=1, max_length=255)
     selected_brand_ids: list[int] = Field(default_factory=list)
 
 
@@ -78,16 +79,13 @@ class CreateSourceInstanceRequest(CreateInstanceRequest):
     pass
 
 
-class CreateTargetInstanceRequest(ZendeskCredentialRequest):
-    """
-    /**
-     * 타겟 인스턴스 생성 요청 스키마를 정의한다.
-     * @param {str} name 화면에서 사용할 인스턴스 별칭
-     * @returns {None} 요청 스키마이므로 반환값 없음
-     */
-    """
+class CreateTargetInstanceRequest(BaseModel):
+    """@deprecated OAuth connect 사용."""
 
     name: str | None = Field(default=None, max_length=255)
+    subdomain: str = Field(min_length=1, max_length=255)
+    email: str = Field(min_length=1, max_length=255)
+    api_token: str = Field(min_length=1, max_length=255)
 
 
 class InstanceResponse(BaseModel):
@@ -112,6 +110,11 @@ class InstanceResponse(BaseModel):
     name: str
     subdomain: str
     email: str
+    oauth_connected: bool = False
+    oauth_client_id: str = ""
+    oauth_redirect_uri: str = ""
+    oauth_scopes: str = ""
+    oauth_client_configured: bool = False
     role: str
     is_active: bool
     last_fetched_at: datetime | None
@@ -156,17 +159,15 @@ class UpdateInstanceActiveRequest(BaseModel):
 class UpdateInstanceRequest(BaseModel):
     """
     /**
-     * 인스턴스 기본 정보 수정 요청 스키마를 정의한다.
-     * @param {str | None} name 화면에서 사용할 인스턴스 별칭
-     * @param {str} email Zendesk 계정 이메일
-     * @param {str | None} api_token Zendesk API 토큰(비우면 기존 토큰 유지)
-     * @returns {None} 요청 스키마이므로 반환값 없음
+     * 인스턴스 메타·OAuth 클라이언트 설정 수정(토큰은 Zendesk 연결로 갱신).
      */
     """
 
     name: str | None = Field(default=None, max_length=255)
-    email: str = Field(min_length=1, max_length=255)
-    api_token: str | None = Field(default=None, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
+    oauth_client_id: str | None = Field(default=None, max_length=255)
+    oauth_client_secret: str | None = Field(default=None, max_length=2048)
+    oauth_scopes: str | None = Field(default=None, max_length=255)
 
 
 class ConnectionTestResponse(BaseModel):

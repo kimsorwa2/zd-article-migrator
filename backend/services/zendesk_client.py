@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json as jsonlib
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -40,6 +39,8 @@ class ZendeskClient:
     """
     /**
      * Zendesk API 공통 통신 기능을 제공한다.
+     * OAuth access token은 Authorization: Bearer 로 전달한다.
+     * @see https://developer.zendesk.com/documentation/api-basics/authentication/creating-and-using-oauth-tokens-with-the-api/
      * @returns {None} 유틸리티 클래스이므로 반환값 없음
      */
     """
@@ -71,26 +72,25 @@ class ZendeskClient:
         return fallback
 
     @staticmethod
-    def _build_headers(email: str, api_token: str) -> dict[str, str]:
+    def _build_headers(access_token: str) -> dict[str, str]:
         """
         /**
-         * Basic Auth 헤더를 생성한다.
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
+         * OAuth Bearer 인증 헤더를 생성한다.
+         * @param {str} access_token Zendesk OAuth access token
          * @returns {dict[str, str]} 인증 헤더가 포함된 헤더 딕셔너리
          */
         """
-        credential = f"{email}/token:{api_token}"
-        encoded = base64.b64encode(credential.encode("utf-8")).decode("utf-8")
-        return {"Authorization": f"Basic {encoded}", "Content-Type": "application/json"}
+        return {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
 
     @classmethod
     async def _request(
         cls,
         method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"],
         url: str,
-        email: str,
-        api_token: str,
+        access_token: str,
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         files: dict[str, tuple[str, bytes, str]] | None = None,
@@ -100,23 +100,20 @@ class ZendeskClient:
          * Zendesk API 공통 요청을 수행하고 재시도 정책을 적용한다.
          * @param {"GET" | "POST" | "PUT" | "PATCH" | "DELETE"} method HTTP 메서드
          * @param {str} url 요청 URL
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
+         * @param {str} access_token OAuth access token
          * @param {dict[str, Any] | None} json 요청 본문(JSON)
          * @param {dict[str, str] | None} headers 추가 요청 헤더
          * @param {dict[str, tuple[str, bytes, str]] | None} files 멀티파트 파일 데이터
          * @returns {httpx.Response} HTTP 응답 객체
          */
         """
-        request_headers = cls._build_headers(email=email, api_token=api_token)
+        request_headers = cls._build_headers(access_token=access_token)
         if files is not None and "Content-Type" in request_headers:
-            # 멀티파트 업로드 시 Content-Type은 httpx가 자동으로 설정한다.
             request_headers.pop("Content-Type")
         if headers:
             request_headers.update(headers)
 
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
-            # Zendesk rate limit 대응을 위해 각 요청 전 고정 대기 시간을 둔다.
             await asyncio.sleep(REQUEST_INTERVAL_SECONDS)
 
             for attempt in range(MAX_RETRY_COUNT + 1):
@@ -151,8 +148,7 @@ class ZendeskClient:
         cls,
         method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"],
         url: str,
-        email: str,
-        api_token: str,
+        access_token: str,
         json: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
@@ -160,8 +156,7 @@ class ZendeskClient:
          * Zendesk API 요청 후 JSON 응답을 딕셔너리로 반환한다.
          * @param {"GET" | "POST" | "PUT" | "PATCH" | "DELETE"} method HTTP 메서드
          * @param {str} url 요청 URL
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
+         * @param {str} access_token OAuth access token
          * @param {dict[str, Any] | None} json 요청 본문(JSON)
          * @returns {dict[str, Any]} 파싱된 JSON 응답
          */
@@ -169,8 +164,7 @@ class ZendeskClient:
         response = await cls._request(
             method=method,
             url=url,
-            email=email,
-            api_token=api_token,
+            access_token=access_token,
             json=json,
         )
         try:
@@ -184,98 +178,49 @@ class ZendeskClient:
             ) from error
 
     @classmethod
-    async def get_json(cls, url: str, email: str, api_token: str) -> dict[str, Any]:
-        """
-        /**
-         * GET 요청으로 JSON 응답을 반환한다.
-         * @param {str} url 요청 URL
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
-         * @returns {dict[str, Any]} 파싱된 JSON 응답
-         */
-        """
-        return await cls.request_json(method="GET", url=url, email=email, api_token=api_token)
+    async def get_json(cls, url: str, access_token: str) -> dict[str, Any]:
+        """GET 요청으로 JSON 응답을 반환한다."""
+        return await cls.request_json(method="GET", url=url, access_token=access_token)
 
     @classmethod
     async def post_json(
         cls,
         url: str,
-        email: str,
-        api_token: str,
+        access_token: str,
         json: dict[str, Any],
     ) -> dict[str, Any]:
-        """
-        /**
-         * POST 요청으로 JSON 응답을 반환한다.
-         * @param {str} url 요청 URL
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
-         * @param {dict[str, Any]} json 요청 본문(JSON)
-         * @returns {dict[str, Any]} 파싱된 JSON 응답
-         */
-        """
-        return await cls.request_json(method="POST", url=url, email=email, api_token=api_token, json=json)
+        """POST 요청으로 JSON 응답을 반환한다."""
+        return await cls.request_json(method="POST", url=url, access_token=access_token, json=json)
 
     @classmethod
     async def put_json(
         cls,
         url: str,
-        email: str,
-        api_token: str,
+        access_token: str,
         json: dict[str, Any],
     ) -> dict[str, Any]:
-        """
-        /**
-         * PUT 요청으로 JSON 응답을 반환한다.
-         */
-        """
-        return await cls.request_json(method="PUT", url=url, email=email, api_token=api_token, json=json)
+        """PUT 요청으로 JSON 응답을 반환한다."""
+        return await cls.request_json(method="PUT", url=url, access_token=access_token, json=json)
 
     @classmethod
     async def patch_json(
         cls,
         url: str,
-        email: str,
-        api_token: str,
+        access_token: str,
         json: dict[str, Any],
     ) -> dict[str, Any]:
-        """
-        /**
-         * PATCH 요청으로 JSON 응답을 반환한다.
-         * @param {str} url 요청 URL
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
-         * @param {dict[str, Any]} json 요청 본문(JSON)
-         * @returns {dict[str, Any]} 파싱된 JSON 응답
-         */
-        """
-        return await cls.request_json(method="PATCH", url=url, email=email, api_token=api_token, json=json)
+        """PATCH 요청으로 JSON 응답을 반환한다."""
+        return await cls.request_json(method="PATCH", url=url, access_token=access_token, json=json)
 
     @classmethod
-    async def delete(cls, url: str, email: str, api_token: str) -> None:
-        """
-        /**
-         * DELETE 요청을 수행한다.
-         * @param {str} url 요청 URL
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
-         * @returns {None} 성공 시 반환값 없음
-         */
-        """
-        await cls._request(method="DELETE", url=url, email=email, api_token=api_token)
+    async def delete(cls, url: str, access_token: str) -> None:
+        """DELETE 요청을 수행한다."""
+        await cls._request(method="DELETE", url=url, access_token=access_token)
 
     @classmethod
-    async def get_bytes(cls, url: str, email: str, api_token: str) -> bytes:
-        """
-        /**
-         * GET 요청으로 바이너리 응답을 반환한다.
-         * @param {str} url 요청 URL
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
-         * @returns {bytes} 다운로드된 바이너리 데이터
-         */
-        """
-        response = await cls._request(method="GET", url=url, email=email, api_token=api_token)
+    async def get_bytes(cls, url: str, access_token: str) -> bytes:
+        """GET 요청으로 바이너리 응답을 반환한다."""
+        response = await cls._request(method="GET", url=url, access_token=access_token)
         return response.content
 
     @classmethod
@@ -286,62 +231,31 @@ class ZendeskClient:
         content_type: str,
         content: bytes,
         target_subdomain: str,
-        email: str,
-        api_token: str,
+        access_token: str,
     ) -> dict[str, Any]:
-        """
-        /**
-         * 타겟 아티클에 첨부파일을 업로드한다.
-         * @param {int} article_id 타겟 아티클 ID
-         * @param {str} filename 업로드 파일명
-         * @param {str} content_type MIME 타입
-         * @param {bytes} content 업로드할 파일 바이너리
-         * @param {str} target_subdomain 타겟 Zendesk 서브도메인
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
-         * @returns {dict[str, Any]} 업로드 응답 JSON
-         */
-        """
+        """타겟 아티클에 첨부파일을 업로드한다."""
         url = f"https://{target_subdomain}.zendesk.com/api/v2/help_center/articles/{article_id}/attachments"
         response = await cls._request(
             method="POST",
             url=url,
-            email=email,
-            api_token=api_token,
+            access_token=access_token,
             files={"file": (filename, content, content_type)},
         )
         return response.json()
 
     @classmethod
-    async def test_account(cls, subdomain: str, email: str, api_token: str) -> None:
-        """
-        /**
-         * 타겟 또는 공통 계정의 연결 가능 여부를 확인한다.
-         * @param {str} subdomain Zendesk 서브도메인
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
-         * @returns {None} 성공 시 반환값 없음, 실패 시 예외 발생
-         */
-        """
+    async def test_account(cls, subdomain: str, access_token: str) -> None:
+        """계정 연결 가능 여부를 확인한다."""
         url = f"https://{subdomain}.zendesk.com/api/v2/account.json"
-        await cls.get_json(url=url, email=email, api_token=api_token)
+        await cls.get_json(url=url, access_token=access_token)
 
     @classmethod
-    async def get_brands(cls, main_subdomain: str, email: str, api_token: str) -> list[ZendeskBrand]:
-        """
-        /**
-         * 소스 인스턴스의 브랜드 목록을 조회한다.
-         * @param {str} main_subdomain 소스 메인 서브도메인
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
-         * @returns {list[ZendeskBrand]} Zendesk 브랜드 목록
-         */
-        """
+    async def get_brands(cls, main_subdomain: str, access_token: str) -> list[ZendeskBrand]:
+        """브랜드 목록을 조회한다."""
         url = f"https://{main_subdomain}.zendesk.com/api/v2/brands.json"
-        payload = await cls.get_json(url=url, email=email, api_token=api_token)
+        payload = await cls.get_json(url=url, access_token=access_token)
         brands = payload.get("brands", [])
 
-        # 응답 구조가 일부 다를 수 있어 안전하게 필드를 추출한다.
         return [
             ZendeskBrand(
                 id=brand["id"],

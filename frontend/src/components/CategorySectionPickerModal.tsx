@@ -222,6 +222,7 @@ export default function CategorySectionPickerModal({
           </button>
         </header>
 
+        <div className="modal-body">
         {!loading && hcBrands.length > 0 ? (
           <div className="csp-toolbar">
             <button type="button" className="csp-toolbar-btn" onClick={expandAll}>
@@ -325,6 +326,7 @@ export default function CategorySectionPickerModal({
         <footer className="csp-footer">
           <p className="muted">섹션(또는 하위 섹션)을 클릭하면 선택이 완료됩니다.</p>
         </footer>
+        </div>
       </div>
     </div>
   );

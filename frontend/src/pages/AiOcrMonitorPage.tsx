@@ -441,6 +441,7 @@ export default function AiOcrMonitorPage() {
               </div>
             </div>
 
+            <div className="modal-body">
             {selectedItem.parse_error_message ? (
               <div style={{ marginBottom: 14 }}>
                 <h4 style={{ margin: "0 0 6px" }}>파싱 오류</h4>
@@ -521,6 +522,7 @@ export default function AiOcrMonitorPage() {
               >
                 {selectedItem.raw_response_text ?? "(저장된 원문 없음)"}
               </pre>
+            </div>
             </div>
           </div>
         </div>

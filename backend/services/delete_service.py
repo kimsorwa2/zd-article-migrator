@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Article, Brand, Category, Instance, MigrationMapping, Section
 from services.migration_service import MigrationService
-from services.zendesk_client import ZendeskClient, ZendeskClientError
+from services.zendesk_oauth_service import ZendeskOAuthService
+from services.zendesk_client import ZendeskClientError
 
 
 @dataclass(slots=True)
@@ -441,10 +442,10 @@ class DeleteService:
             if mapping.target_entity_id is None:
                 return
             try:
-                await ZendeskClient.delete(
-                    url=f"{base_url}{endpoint}",
-                    email=target_hc.instance.email,
-                    api_token=target_hc.instance.api_token,
+                await ZendeskOAuthService.delete(
+                    target_hc.session,
+                    target_hc.instance,
+                    f"{base_url}{endpoint}",
                 )
                 await session.delete(mapping)
                 if counter == "articles":

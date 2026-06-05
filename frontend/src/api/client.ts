@@ -16,6 +16,11 @@ export interface Instance {
   name: string;
   subdomain: string;
   email: string;
+  oauth_connected: boolean;
+  oauth_client_configured: boolean;
+  oauth_client_id: string;
+  oauth_redirect_uri: string;
+  oauth_scopes: string;
   role: string;
   is_active: boolean;
   last_fetched_at: string | null;
@@ -464,51 +469,36 @@ export const apiClient = {
       method: "PATCH",
       body: JSON.stringify({ is_active: isActive }),
     }),
-  updateInstance: (instanceId: number, payload: { name: string; email: string; api_token?: string }) =>
+  updateInstance: (instanceId: number, payload: {
+    name?: string;
+    email?: string;
+    oauth_client_id?: string;
+    oauth_client_secret?: string;
+    oauth_scopes?: string;
+  }) =>
     request<Instance>(`/instances/${instanceId}`, {
       method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  connectOAuth: (payload: {
+    subdomain: string;
+    oauth_client_id: string;
+    oauth_client_secret: string;
+    oauth_scopes?: string;
+    name?: string;
+    instance_id?: number;
+    selected_brand_ids?: number[];
+  }) =>
+    request<InstanceDetail>("/instances/oauth/connect", {
+      method: "POST",
       body: JSON.stringify(payload),
     }),
   deleteInstance: (instanceId: number) =>
     request<void>(`/instances/${instanceId}`, {
       method: "DELETE",
     }),
-  previewBrands: (payload: { subdomain: string; email: string; api_token: string }) =>
+  previewBrands: (payload: { instance_id: number }) =>
     request<SourceBrand[]>("/instances/brands/preview", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-  createInstance: (payload: {
-    name: string;
-    subdomain: string;
-    email: string;
-    api_token: string;
-    selected_brand_ids: number[];
-  }) =>
-    request<InstanceDetail>("/instances", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-  /** @deprecated createInstance 사용 */
-  createSourceInstance: (payload: {
-    name: string;
-    subdomain: string;
-    email: string;
-    api_token: string;
-    selected_brand_ids: number[];
-  }) =>
-    request<InstanceDetail>("/instances/source", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-  /** @deprecated createInstance 사용 */
-  createTargetInstance: (payload: {
-    name: string;
-    subdomain: string;
-    email: string;
-    api_token: string;
-  }) =>
-    request<Instance>("/instances/target", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

@@ -18,7 +18,8 @@ from services.ai_ocr_log import AiOcrLogCollector, AiOcrServiceError
 from services.ai_ocr_service import AiOcrService, html_body_to_preview_text
 from services.article_from_image import image_bytes_to_article, resolve_media_type
 from services.migration_service import INLINE_ARTICLE_ATTACHMENT_URL_PATTERN
-from services.zendesk_client import ZendeskClient, ZendeskClientError
+from services.zendesk_oauth_service import ZendeskOAuthError, ZendeskOAuthService
+from services.zendesk_client import ZendeskClientError
 
 IMG_SRC_PATTERN = re.compile(r"""<img[^>]+src=["']([^"']+)["']""", re.IGNORECASE)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
@@ -257,6 +258,7 @@ class ImageConvertService:
     async def _load_attachment_meta(
         cls,
         *,
+        session: AsyncSession,
         instance: Instance,
         brand_subdomain: str,
         article_a_id: int,
@@ -267,15 +269,15 @@ class ImageConvertService:
          */
         """
         try:
-            payload = await ZendeskClient.get_json(
-                url=(
+            payload = await ZendeskOAuthService.get_json(
+                session,
+                instance,
+                (
                     f"https://{brand_subdomain}.zendesk.com/api/v2/help_center/"
                     f"articles/{article_a_id}/attachments.json"
                 ),
-                email=instance.email,
-                api_token=instance.api_token,
             )
-        except ZendeskClientError:
+        except (ZendeskClientError, ZendeskOAuthError):
             return {}
 
         mapping: dict[str, dict[str, str]] = {}
@@ -302,6 +304,7 @@ class ImageConvertService:
     async def _download_image(
         cls,
         *,
+        session: AsyncSession,
         instance: Instance,
         brand_subdomain: str,
         source_url: str,
@@ -337,12 +340,8 @@ class ImageConvertService:
         content_type = (meta or {}).get("content_type") or "application/octet-stream"
 
         try:
-            binary = await ZendeskClient.get_bytes(
-                url=download_url,
-                email=instance.email,
-                api_token=instance.api_token,
-            )
-        except ZendeskClientError as error:
+            binary = await ZendeskOAuthService.get_bytes(session, instance, download_url)
+        except (ZendeskClientError, ZendeskOAuthError) as error:
             if "status=404" in str(error):
                 subdomains = known_subdomains or {brand_subdomain.lower()}
                 _, paste_reason = cls._diagnose_image_source(
@@ -447,6 +446,7 @@ class ImageConvertService:
         instance = await cls._get_instance(session, source_instance_id)
         known_subdomains = await cls._get_known_subdomains(session, source_instance_id)
         attachment_meta = await cls._load_attachment_meta(
+            session=session,
             instance=instance,
             brand_subdomain=brand.subdomain,
             article_a_id=article.a_id,
@@ -510,6 +510,7 @@ class ImageConvertService:
         instance = await cls._get_instance(session, source_instance_id)
         known_subdomains = await cls._get_known_subdomains(session, source_instance_id)
         attachment_meta = await cls._load_attachment_meta(
+            session=session,
             instance=instance,
             brand_subdomain=brand.subdomain,
             article_a_id=article.a_id,
@@ -525,6 +526,7 @@ class ImageConvertService:
             raise ValueError(availability_reason)
 
         binary, filename, content_type = await cls._download_image(
+            session=session,
             instance=instance,
             brand_subdomain=brand.subdomain,
             source_url=source_url,
@@ -625,6 +627,7 @@ class ImageConvertService:
         system_prompt, user_prompt, _prompt_template_id = await AiOcrService._get_resolved_prompts(session)
         known_subdomains = await cls._get_known_subdomains(session, source_instance_id)
         attachment_meta = await cls._load_attachment_meta(
+            session=session,
             instance=instance,
             brand_subdomain=brand.subdomain,
             article_a_id=article.a_id,
@@ -656,6 +659,7 @@ class ImageConvertService:
             else:
                 try:
                     binary, filename, content_type = await cls._download_image(
+                        session=session,
                         instance=instance,
                         brand_subdomain=brand.subdomain,
                         source_url=source_url,

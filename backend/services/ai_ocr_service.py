@@ -46,7 +46,8 @@ from services.article_from_image import (
     resolve_media_type,
 )
 from services.image_preprocess import experiment_tag_for_preprocess
-from services.zendesk_client import ZendeskClient, ZendeskClientError
+from services.zendesk_oauth_service import ZendeskOAuthError, ZendeskOAuthService
+from services.zendesk_client import ZendeskClientError
 
 logger = logging.getLogger(__name__)
 
@@ -1316,7 +1317,7 @@ class AiOcrService:
             "\n".join(
                 [
                     f"POST {post_url}",
-                    f"인증: {instance.email} / token: ****",
+                    f"인증: OAuth (연결 계정 {instance.email})",
                     "",
                     "요청 본문(JSON):",
                     AiOcrLogCollector.format_json(request_json),
@@ -1325,13 +1326,13 @@ class AiOcrService:
         )
 
         try:
-            response = await ZendeskClient.post_json(
-                url=post_url,
-                email=instance.email,
-                api_token=instance.api_token,
-                json=request_json,
+            response = await ZendeskOAuthService.post_json(
+                session,
+                instance,
+                post_url,
+                json_body=request_json,
             )
-        except ZendeskClientError as error:
+        except (ZendeskClientError, ZendeskOAuthError) as error:
             log.error("Zendesk 응답 오류", str(error))
             raise AiOcrServiceError(f"Zendesk 아티클 생성 실패: {error}", log) from error
 

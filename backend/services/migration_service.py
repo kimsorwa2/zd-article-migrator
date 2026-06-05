@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import Article, Brand, Category, Instance, MigrationMapping, Section
 from services.fetch_service import FetchService
 from services.migrate_progress import MigrateProgressTracker
-from services.zendesk_client import ZendeskClient, ZendeskClientError
+from services.zendesk_oauth_service import ZendeskOAuthError, ZendeskOAuthService
+from services.zendesk_client import ZendeskClientError
 
 DuplicatePolicy = Literal["skip", "update", "force"]
 MigrateLogAction = Literal["created", "updated", "confirmed"]
@@ -91,6 +92,7 @@ class TargetHelpCenter:
      */
     """
 
+    session: AsyncSession
     instance: Instance
     brand: Brand
     subdomain: str
@@ -630,7 +632,7 @@ class MigrationService:
         if not subdomain:
             raise ValueError("타겟 브랜드 서브도메인이 비어 있습니다.")
 
-        target_hc = TargetHelpCenter(instance=target, brand=brand, subdomain=subdomain)
+        target_hc = TargetHelpCenter(session=session, instance=target, brand=brand, subdomain=subdomain)
         return await cls._load_target_help_center_locales(target_hc)
 
     @classmethod
@@ -643,10 +645,7 @@ class MigrationService:
          */
         """
         try:
-            payload = await ZendeskClient.get_json(
-                url=f"{target_hc.base_url}/locales.json",
-                email=target_hc.instance.email,
-                api_token=target_hc.instance.api_token,
+            payload = await ZendeskOAuthService.get_json(target_hc.session, target_hc.instance, url=f"{target_hc.base_url}/locales.json",
             )
         except ZendeskClientError:
             return target_hc
@@ -709,10 +708,7 @@ class MigrationService:
          * @returns {dict[str, int]} 카테고리명 -> 타겟 카테고리 ID
          */
         """
-        payload = await ZendeskClient.get_json(
-            url=f"{target_hc.base_url}/categories.json",
-            email=target_hc.instance.email,
-            api_token=target_hc.instance.api_token,
+        payload = await ZendeskOAuthService.get_json(target_hc.session, target_hc.instance, url=f"{target_hc.base_url}/categories.json",
         )
         categories = payload.get("categories", [])
         return {item["name"]: item["id"] for item in categories}
@@ -733,11 +729,11 @@ class MigrationService:
          * @returns {int} 생성된 타겟 카테고리 ID
          */
         """
-        payload = await ZendeskClient.post_json(
-            url=f"{target_hc.base_url}/categories.json",
-            email=target_hc.instance.email,
-            api_token=target_hc.instance.api_token,
-            json={
+        payload = await ZendeskOAuthService.post_json(
+            target_hc.session,
+            target_hc.instance,
+            f"{target_hc.base_url}/categories.json",
+            json_body={
                 "category": {
                     "name": name,
                     "locale": cls._normalize_help_center_locale(locale, target_hc),
@@ -771,11 +767,11 @@ class MigrationService:
         if parent_section_id is not None:
             section_body["parent_section_id"] = parent_section_id
 
-        payload = await ZendeskClient.post_json(
-            url=f"{target_hc.base_url}/categories/{category_id}/sections.json",
-            email=target_hc.instance.email,
-            api_token=target_hc.instance.api_token,
-            json={"section": section_body},
+        payload = await ZendeskOAuthService.post_json(
+            target_hc.session,
+            target_hc.instance,
+            f"{target_hc.base_url}/categories/{category_id}/sections.json",
+            json_body={"section": section_body},
         )
         return payload["section"]["id"]
 
@@ -831,10 +827,7 @@ class MigrationService:
          */
         """
         try:
-            await ZendeskClient.get_json(
-                url=f"{target_hc.base_url}/articles/{target_article_id}.json",
-                email=target_hc.instance.email,
-                api_token=target_hc.instance.api_token,
+            await ZendeskOAuthService.get_json(target_hc.session, target_hc.instance, url=f"{target_hc.base_url}/articles/{target_article_id}.json",
             )
             return True
         except ZendeskClientError as error:
@@ -886,11 +879,11 @@ class MigrationService:
          */
         """
         locale = cls._normalize_help_center_locale(article.locale, target_hc)
-        payload = await ZendeskClient.post_json(
-            url=f"{target_hc.base_url}/sections/{section_id}/articles.json",
-            email=target_hc.instance.email,
-            api_token=target_hc.instance.api_token,
-            json={
+        payload = await ZendeskOAuthService.post_json(
+            target_hc.session,
+            target_hc.instance,
+            f"{target_hc.base_url}/sections/{section_id}/articles.json",
+            json_body={
                 "article": {
                     "title": article.title,
                     "body": article.body or "",
@@ -928,18 +921,18 @@ class MigrationService:
         }
         put_url = f"{target_hc.base_url}/articles/{target_article_id}/translations/{locale}.json"
         try:
-            await ZendeskClient.put_json(
-                url=put_url,
-                email=target_hc.instance.email,
-                api_token=target_hc.instance.api_token,
-                json=translation_payload,
+            await ZendeskOAuthService.put_json(
+                target_hc.session,
+                target_hc.instance,
+                put_url,
+                json_body=translation_payload,
             )
         except ZendeskClientError:
-            await ZendeskClient.post_json(
-                url=f"{target_hc.base_url}/articles/{target_article_id}/translations.json",
-                email=target_hc.instance.email,
-                api_token=target_hc.instance.api_token,
-                json={
+            await ZendeskOAuthService.post_json(
+                target_hc.session,
+                target_hc.instance,
+                f"{target_hc.base_url}/articles/{target_article_id}/translations.json",
+                json_body={
                     "translation": {
                         "locale": locale,
                         "title": article.title,
@@ -960,11 +953,11 @@ class MigrationService:
          * 아티클 메타데이터(label_names)만 PATCH로 갱신한다.
          */
         """
-        await ZendeskClient.patch_json(
-            url=f"{target_hc.base_url}/articles/{target_article_id}.json",
-            email=target_hc.instance.email,
-            api_token=target_hc.instance.api_token,
-            json={"article": {"label_names": label_names or []}},
+        await ZendeskOAuthService.patch_json(
+            target_hc.session,
+            target_hc.instance,
+            f"{target_hc.base_url}/articles/{target_article_id}.json",
+            json_body={"article": {"label_names": label_names or []}},
         )
 
     @classmethod
@@ -1046,10 +1039,10 @@ class MigrationService:
         if not body:
             return body
 
-        attachments_payload = await ZendeskClient.get_json(
-            url=f"https://{source_subdomain}.zendesk.com/api/v2/help_center/articles/{source_article_id}/attachments.json",
-            email=source.email,
-            api_token=source.api_token,
+        attachments_payload = await ZendeskOAuthService.get_json(
+            target_hc.session,
+            source,
+            f"https://{source_subdomain}.zendesk.com/api/v2/help_center/articles/{source_article_id}/attachments.json",
         )
         attachments = attachments_payload.get("article_attachments", [])
         updated_body = body
@@ -1068,14 +1061,14 @@ class MigrationService:
              */
             """
             try:
-                upload_payload = await ZendeskClient.upload_attachment(
+                upload_payload = await ZendeskOAuthService.upload_attachment(
+                    target_hc.session,
+                    target_hc.instance,
                     article_id=target_article_id,
                     filename=filename,
                     content_type=content_type,
                     content=content,
                     target_subdomain=target_hc.subdomain,
-                    email=target_hc.instance.email,
-                    api_token=target_hc.instance.api_token,
                 )
                 return upload_payload.get("article_attachment", {}).get("content_url")
             except ZendeskClientError as error:
@@ -1094,11 +1087,7 @@ class MigrationService:
             if not source_url:
                 continue
 
-            binary = await ZendeskClient.get_bytes(
-                url=source_url,
-                email=source.email,
-                api_token=source.api_token,
-            )
+            binary = await ZendeskOAuthService.get_bytes(target_hc.session, source, source_url)
             target_url = await _upload_with_fallback(
                 filename=attachment.get("file_name", f"attachment-{source_article_id}"),
                 content_type=attachment.get("content_type", "application/octet-stream"),
@@ -1129,11 +1118,7 @@ class MigrationService:
                 f"https://{source_subdomain}.zendesk.com/hc/article_attachments/{attachment_id}"
             )
             try:
-                binary = await ZendeskClient.get_bytes(
-                    url=inline_download_url,
-                    email=source.email,
-                    api_token=source.api_token,
-                )
+                binary = await ZendeskOAuthService.get_bytes(target_hc.session, source, inline_download_url)
             except ZendeskClientError:
                 continue
 

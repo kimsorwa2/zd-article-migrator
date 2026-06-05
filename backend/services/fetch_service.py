@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import Article, Brand, Category, Instance, Section
 from services.fetch_progress import FetchProgressTracker
 from services.help_center_tree import build_nested_section_nodes
-from services.zendesk_client import ZendeskClient, ZendeskClientError
+from services.zendesk_oauth_service import ZendeskOAuthError, ZendeskOAuthService
+from services.zendesk_client import ZendeskClientError
 
 
 ARTICLES_PER_PAGE = 100
@@ -87,11 +88,7 @@ class FetchService:
         if existing_brands:
             return
 
-        zendesk_brands = await ZendeskClient.get_brands(
-            main_subdomain=instance.subdomain,
-            email=instance.email,
-            api_token=instance.api_token,
-        )
+        zendesk_brands = await ZendeskOAuthService.get_brands(session, instance)
         for brand in zendesk_brands:
             session.add(
                 Brand(
@@ -109,26 +106,26 @@ class FetchService:
     async def _fetch_json_with_context(
         cls,
         *,
+        session: AsyncSession,
+        instance: Instance,
         url: str,
-        email: str,
-        api_token: str,
         brand_name: str,
         fetch_step: str,
     ) -> dict:
         """
         /**
          * Zendesk API 호출 실패 시 디버깅 가능한 문맥 정보를 포함해 예외를 래핑한다.
+         * @param {AsyncSession} session DB 세션
+         * @param {Instance} instance OAuth 인증 대상 인스턴스
          * @param {str} url Zendesk 요청 URL
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
          * @param {str} brand_name 현재 수집 중인 브랜드 이름
          * @param {str} fetch_step 수집 단계 식별자(categories/sections/articles)
          * @returns {dict} Zendesk JSON 응답 페이로드
          */
         """
         try:
-            return await ZendeskClient.get_json(url=url, email=email, api_token=api_token)
-        except ZendeskClientError as error:
+            return await ZendeskOAuthService.get_json(session, instance, url)
+        except (ZendeskClientError, ZendeskOAuthError) as error:
             error_message = f"[수집 실패] 브랜드={brand_name}, 단계={fetch_step}, URL={url}, 원인={error}"
             logger.error(error_message)
             raise ZendeskClientError(error_message) from error
@@ -177,19 +174,19 @@ class FetchService:
     async def _fetch_all_help_center_articles(
         cls,
         *,
+        session: AsyncSession,
+        instance: Instance,
         instance_id: int,
         brand_index: int,
         base_url: str,
-        email: str,
-        api_token: str,
         brand_name: str,
     ) -> list[dict]:
         """
         /**
          * Help Center 아티클 전체를 커서 페이지네이션으로 수집한다.
+         * @param {AsyncSession} session DB 세션
+         * @param {Instance} instance OAuth 인증 대상 인스턴스
          * @param {str} base_url 브랜드 Help Center API 베이스 URL
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
          * @param {str} brand_name 브랜드 이름(로그용)
          * @returns {list[dict]} 수집된 아티클 JSON 목록
          */
@@ -201,9 +198,9 @@ class FetchService:
         while next_page_url:
             page_index += 1
             articles_payload = await cls._fetch_json_with_context(
+                session=session,
+                instance=instance,
                 url=next_page_url,
-                email=email,
-                api_token=api_token,
                 brand_name=brand_name,
                 fetch_step="articles",
             )
@@ -276,20 +273,20 @@ class FetchService:
     async def _enrich_articles_with_attachment_flags(
         cls,
         *,
+        session: AsyncSession,
+        instance: Instance,
         instance_id: int,
         brand_index: int,
         brand_subdomain: str,
-        email: str,
-        api_token: str,
         brand_name: str,
         article_items: list[dict],
     ) -> None:
         """
         /**
          * 아티클 목록에 첨부파일 존재 여부를 병렬로 조회해 항목에 반영한다.
+         * @param {AsyncSession} session DB 세션
+         * @param {Instance} instance OAuth 인증 대상 인스턴스
          * @param {str} brand_subdomain 브랜드 서브도메인
-         * @param {str} email Zendesk 로그인 이메일
-         * @param {str} api_token Zendesk API 토큰
          * @param {str} brand_name 브랜드 이름(로깅용)
          * @param {list[dict]} article_items Zendesk 아티클 목록(제자리 수정)
          * @returns {None}
@@ -323,9 +320,9 @@ class FetchService:
             async with semaphore:
                 try:
                     payload = await cls._fetch_json_with_context(
+                        session=session,
+                        instance=instance,
                         url=attachments_url,
-                        email=email,
-                        api_token=api_token,
                         brand_name=brand_name,
                         fetch_step="article_attachments",
                     )
@@ -591,9 +588,9 @@ class FetchService:
         )
         brand_meta_url = f"https://{instance.subdomain}.zendesk.com/api/v2/brands/{brand.a_brand_id}"
         brand_meta_payload = await cls._fetch_json_with_context(
+            session=session,
+            instance=instance,
             url=brand_meta_url,
-            email=instance.email,
-            api_token=instance.api_token,
             brand_name=brand.name,
             fetch_step="brand_meta",
         )
@@ -626,9 +623,9 @@ class FetchService:
             message=f"{brand.name} 카테고리 수집 중",
         )
         categories_payload = await cls._fetch_json_with_context(
+            session=session,
+            instance=instance,
             url=categories_url,
-            email=instance.email,
-            api_token=instance.api_token,
             brand_name=brand.name,
             fetch_step="categories",
         )
@@ -649,9 +646,9 @@ class FetchService:
             message=f"{brand.name} 섹션 수집 중",
         )
         sections_payload = await cls._fetch_json_with_context(
+            session=session,
+            instance=instance,
             url=f"{base_url}/sections.json",
-            email=instance.email,
-            api_token=instance.api_token,
             brand_name=brand.name,
             fetch_step="sections",
         )
@@ -665,20 +662,20 @@ class FetchService:
         brand_section_a_ids = {item["id"] for item in section_items}
 
         article_items = await cls._fetch_all_help_center_articles(
+            session=session,
+            instance=instance,
             instance_id=instance_id,
             brand_index=brand_index,
             base_url=base_url,
-            email=instance.email,
-            api_token=instance.api_token,
             brand_name=brand.name,
         )
 
         await cls._enrich_articles_with_attachment_flags(
+            session=session,
+            instance=instance,
             instance_id=instance_id,
             brand_index=brand_index,
             brand_subdomain=brand.subdomain,
-            email=instance.email,
-            api_token=instance.api_token,
             brand_name=brand.name,
             article_items=article_items,
         )

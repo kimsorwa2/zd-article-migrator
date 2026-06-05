@@ -110,6 +110,7 @@ export default function AiOcrSettingsModal({ open, onClose, onSaved }: AiOcrSett
           </button>
         </div>
 
+        <div className="modal-body">
         {loading ? <p className="muted">설정 불러오는 중...</p> : null}
 
         {!loading ? (
@@ -160,6 +161,7 @@ export default function AiOcrSettingsModal({ open, onClose, onSaved }: AiOcrSett
             </button>
           </div>
         ) : null}
+        </div>
       </div>
     </div>
   );
