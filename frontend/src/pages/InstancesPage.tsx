@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CirclePlus, Database, FolderSync, Pencil, Trash2, X } from "lucide-react";
 import { apiClient, type FetchDetailResponse, type FetchSyncProgress, type Instance } from "../api/client";
 import FetchDataTree from "../components/FetchDataTree";
@@ -12,6 +12,8 @@ import { useTimedNotice } from "../hooks/useTimedNotice";
 function parseSubdomain(input: string): string {
   return input.replace(".zendesk.com", "").trim();
 }
+
+type InstanceDetailTab = "settings" | "fetch";
 
 /**
  * ISO 날짜 문자열을 로컬 표시 형식으로 변환한다.
@@ -43,8 +45,23 @@ export default function InstancesPage() {
   const SYNC_POLL_MAX_IDLE_ROUNDS = 15;
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [deletingInstanceId, setDeletingInstanceId] = useState<number | null>(null);
+  const [detailTab, setDetailTab] = useState<InstanceDetailTab>("settings");
+  const [listFilter, setListFilter] = useState("");
 
   const selectedInstance = instances.find((instance) => instance.id === selectedInstanceId) ?? null;
+
+  /** 이름·서브도메인 기준으로 목록을 필터링한다. */
+  const filteredInstances = useMemo(() => {
+    const query = listFilter.trim().toLowerCase();
+    if (!query) {
+      return instances;
+    }
+    return instances.filter((instance) => {
+      const name = instance.name.toLowerCase();
+      const subdomain = instance.subdomain.toLowerCase();
+      return name.includes(query) || subdomain.includes(query);
+    });
+  }, [instances, listFilter]);
 
   async function loadInstances() {
     setIsLoading(true);
@@ -103,11 +120,8 @@ export default function InstancesPage() {
   }, []);
 
   useEffect(() => {
-    void loadDetail(selectedInstanceId);
-  }, [selectedInstanceId, loadDetail]);
-
-  /** 다른 인스턴스를 선택하면 이전 인스턴스의 수집 진행·실패 패널을 숨긴다. */
-  useEffect(() => {
+    setDetailTab("settings");
+    setDetail(null);
     setSyncProgress((current) => {
       if (!current || current.instance_id === selectedInstanceId) {
         return current;
@@ -115,6 +129,13 @@ export default function InstancesPage() {
       return null;
     });
   }, [selectedInstanceId]);
+
+  useEffect(() => {
+    if (detailTab !== "fetch" || !selectedInstanceId) {
+      return;
+    }
+    void loadDetail(selectedInstanceId);
+  }, [detailTab, selectedInstanceId, loadDetail]);
 
   /**
    * Client Credentials로 Zendesk OAuth 토큰을 발급하고 인스턴스를 생성·갱신한다.
@@ -140,7 +161,7 @@ export default function InstancesPage() {
       setFormError("");
       setShowCreateForm(false);
       await loadInstances();
-      setMessage("Zendesk OAuth 연결이 완료되었습니다.", { variant: "success" });
+      setMessage("Zendesk OAuth 연결이 완료되었습니다.");
       window.dispatchEvent(new CustomEvent("zd:instances-refresh"));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "OAuth 연결 실패";
@@ -168,7 +189,7 @@ export default function InstancesPage() {
       await handleConnectOAuth(payload, { instanceId: instance.id });
       closeEditModal();
       await loadInstances();
-      setMessage("인스턴스 저장 및 Zendesk OAuth 연결이 완료되었습니다.", { variant: "success" });
+      setMessage("인스턴스 저장 및 Zendesk OAuth 연결이 완료되었습니다.");
       setEditFormError("");
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "저장·Zendesk 연결 실패";
@@ -331,7 +352,6 @@ export default function InstancesPage() {
       await apiClient.deleteInstance(instance.id);
       setMessage(`인스턴스 「${instance.name}」 삭제 완료`);
       if (selectedInstanceId === instance.id) {
-        setSyncError("");
         setSyncProgress(null);
         setIsSyncing(false);
       }
@@ -351,10 +371,11 @@ export default function InstancesPage() {
       <header className="page-top">
         <h2 className="page-title">
           <Database size={22} aria-hidden="true" />
-          인스턴스 관리
+          Zendesk 인스턴스
         </h2>
         <p className="page-lead">
-          Zendesk OAuth(Client Credentials)로 계정을 연결하고 Help Center 데이터를 수집합니다. 마이그레이션 시 등록된 인스턴스 중에서 소스와 타겟을 선택합니다.
+          Zendesk OAuth(Client Credentials)로 인스턴스를 연결·관리합니다. Help Center 데이터 수집은 선택한 인스턴스의 「수집」 탭에서
+          실행할 수 있습니다.
         </p>
       </header>
       {message ? <NoticeBanner message={message} variant={noticeVariant} onDismiss={clearMessage} /> : null}
@@ -362,7 +383,7 @@ export default function InstancesPage() {
       <div className="instances-split">
         <div className="instances-panel instances-panel-list">
           <div className="card-header-row">
-            <h3 className="migrate-panel-title">인스턴스 리스트</h3>
+            <h3 className="migrate-panel-title">인스턴스</h3>
             <button
               type="button"
               className="icon-button"
@@ -375,74 +396,44 @@ export default function InstancesPage() {
               추가
             </button>
           </div>
+          <label className="instance-list-filter">
+            <span className="sr-only">인스턴스 검색</span>
+            <input
+              type="search"
+              value={listFilter}
+              placeholder="이름 또는 서브도메인 검색"
+              disabled={isLoading}
+              onChange={(event) => setListFilter(event.target.value)}
+            />
+          </label>
           <div className="instances-list-body">
             {isLoading ? <LoadingPanel message="인스턴스 리스트를 불러오는 중..." /> : null}
             {!isLoading && instances.length === 0 ? <p className="muted">등록된 인스턴스가 없습니다.</p> : null}
+            {!isLoading && instances.length > 0 && filteredInstances.length === 0 ? (
+              <p className="muted">검색 조건에 맞는 인스턴스가 없습니다.</p>
+            ) : null}
             <div className="instance-list">
-              {instances.map((instance) => {
+              {filteredInstances.map((instance) => {
                 const isSelected = selectedInstanceId === instance.id;
                 return (
-                <div
-                  key={instance.id}
-                  className={`instance-list-row${isSelected ? " is-selected" : ""}`}
-                >
-                  <div
-                    className="instance-list-row-main instance-list-row-select"
-                    role="button"
-                    tabIndex={0}
-                    aria-pressed={isSelected}
-                    aria-label={`${instance.name} 선택`}
+                  <button
+                    key={instance.id}
+                    type="button"
+                    className={`instance-list-item${isSelected ? " is-selected" : ""}`}
+                    aria-current={isSelected ? "true" : undefined}
                     onClick={() => setSelectedInstanceId(instance.id)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter" && event.key !== " ") {
-                        return;
-                      }
-                      event.preventDefault();
-                      setSelectedInstanceId(instance.id);
-                    }}
                   >
-                    <div className="instance-list-row-title">
-                      <strong>{instance.name}</strong>
+                    <span className="instance-list-item-badges">
                       <StatusBadge active={instance.is_active} />
-                    </div>
-                    <p className="muted">{instance.subdomain}</p>
-                    <p className="muted instance-list-meta">
-                      마지막 수집: {formatFetchedAt(instance.last_fetched_at)}
-                    </p>
-                  </div>
-                  <div className="instance-list-row-actions">
-                    <div className="instance-list-row-actions-group">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditFormError("");
-                          setEditingInstance(instance);
-                        }}
+                      <span
+                        className={`badge ${instance.oauth_connected ? "badge-green" : "badge-gray"}`}
                       >
-                        <Pencil size={14} aria-hidden="true" /> 편집
-                      </button>
-                      <button type="button" onClick={() => void handleTestConnection(instance.id)}>
-                        연결 테스트
-                      </button>
-                      <button type="button" onClick={() => void handleToggleActive(instance)}>
-                        {instance.is_active ? "비활성화" : "활성화"}
-                      </button>
-                    </div>
-                    <button
-                      type="button"
-                      className="instance-list-delete-btn"
-                      title="인스턴스 삭제"
-                      aria-label={`${instance.name} 삭제`}
-                      disabled={
-                        deletingInstanceId === instance.id ||
-                        (isSyncing && selectedInstanceId === instance.id)
-                      }
-                      onClick={() => void handleDeleteInstance(instance)}
-                    >
-                      <Trash2 size={16} aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
+                        {instance.oauth_connected ? "OAuth" : "미연결"}
+                      </span>
+                    </span>
+                    <strong className="instance-list-item-name">{instance.name}</strong>
+                    <span className="instance-list-item-sub muted">{instance.subdomain}</span>
+                  </button>
                 );
               })}
             </div>
@@ -456,49 +447,155 @@ export default function InstancesPage() {
                 <div>
                   <h3 className="migrate-panel-title">{selectedInstance.name}</h3>
                   <p className="muted">{selectedInstance.subdomain}</p>
-                  <p className="muted">마지막 수집: {formatFetchedAt(selectedInstance.last_fetched_at)}</p>
                 </div>
+              </div>
+
+              <div className="instance-detail-tabs" role="tablist" aria-label="인스턴스 상세">
                 <button
                   type="button"
-                  className="migrate-primary-action"
-                  disabled={isSyncing}
-                  title="선택된 모든 브랜드를 순차 수집합니다"
-                  onClick={() => void handleSync()}
+                  role="tab"
+                  aria-selected={detailTab === "settings"}
+                  className={`instance-detail-tab${detailTab === "settings" ? " is-active" : ""}`}
+                  onClick={() => setDetailTab("settings")}
                 >
-                  <FolderSync size={16} aria-hidden="true" />
-                  {isSyncing && syncingBrandId === null ? "수집 중..." : "전체 브랜드 수집"}
+                  설정
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={detailTab === "fetch"}
+                  className={`instance-detail-tab${detailTab === "fetch" ? " is-active" : ""}`}
+                  onClick={() => setDetailTab("fetch")}
+                >
+                  Help Center 수집
                 </button>
               </div>
 
-              {syncProgress && syncProgress.instance_id === selectedInstanceId ? (
-                <SyncProgressPanel
-                  progress={syncProgress}
-                  onDismiss={() => setSyncProgress(null)}
-                />
-              ) : null}
+              {detailTab === "settings" ? (
+                <div className="instance-settings-panel" role="tabpanel">
+                  <table className="instance-settings-table">
+                    <tbody>
+                      <tr>
+                        <th scope="row">연결 계정</th>
+                        <td>{selectedInstance.email || "—"}</td>
+                        <th scope="row">상태</th>
+                        <td>
+                          <StatusBadge active={selectedInstance.is_active} />
+                        </td>
+                      </tr>
+                      <tr>
+                        <th scope="row">OAuth</th>
+                        <td>{selectedInstance.oauth_connected ? "연결됨" : "미연결"}</td>
+                        <th scope="row">OAuth scope</th>
+                        <td>
+                          <code>{selectedInstance.oauth_scopes || "read write"}</code>
+                        </td>
+                      </tr>
+                      <tr>
+                        <th scope="row">Client ID</th>
+                        <td>{selectedInstance.oauth_client_id || "—"}</td>
+                        <th scope="row">마지막 수집</th>
+                        <td>{formatFetchedAt(selectedInstance.last_fetched_at)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
 
-              {isDetailLoading && !isSyncing ? <LoadingPanel message="Help Center 구조를 불러오는 중..." /> : null}
-              {!isDetailLoading && detail ? (
-                <>
-                  <p className="muted">
-                    브랜드 {detail.summary.total_brands} · 카테고리 {detail.summary.total_categories} · 섹션 {detail.summary.total_sections} · 아티클{" "}
-                    {detail.summary.total_articles}
-                  </p>
-                  <FetchDataTree
-                    title="Help Center 구조"
-                    brands={detail.brands}
-                    onSyncBrand={(brandId) => void handleSyncBrand(brandId)}
-                    syncingBrandId={syncingBrandId}
-                    syncDisabled={isSyncing}
-                  />
-                </>
-              ) : null}
-              {!isDetailLoading && !detail?.brands.length ? (
-                <p className="muted migrate-panel-placeholder">수집된 데이터가 없습니다. Help Center 수집을 실행하세요.</p>
-              ) : null}
+                  <div className="instance-detail-actions">
+                    <button
+                      type="button"
+                      className="button-primary"
+                      onClick={() => {
+                        setEditFormError("");
+                        setEditingInstance(selectedInstance);
+                      }}
+                    >
+                      <Pencil size={14} aria-hidden="true" />
+                      편집
+                    </button>
+                    <button
+                      type="button"
+                      className="button-ghost"
+                      onClick={() => void handleTestConnection(selectedInstance.id)}
+                    >
+                      연결 테스트
+                    </button>
+                    <button
+                      type="button"
+                      className="button-ghost"
+                      onClick={() => void handleToggleActive(selectedInstance)}
+                    >
+                      {selectedInstance.is_active ? "비활성화" : "활성화"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button-ghost instance-detail-delete"
+                      disabled={
+                        deletingInstanceId === selectedInstance.id ||
+                        (isSyncing && selectedInstanceId === selectedInstance.id)
+                      }
+                      onClick={() => void handleDeleteInstance(selectedInstance)}
+                    >
+                      <Trash2 size={14} aria-hidden="true" />
+                      삭제
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="instance-fetch-panel" role="tabpanel">
+                  <div className="instance-fetch-toolbar">
+                    <p className="muted instance-fetch-lead">
+                      Help Center 브랜드·카테고리·섹션·아티클을 DB에 동기화합니다. 마이그레이션 전 수집이 필요합니다.
+                    </p>
+                    <button
+                      type="button"
+                      className="migrate-primary-action"
+                      disabled={isSyncing}
+                      title="선택된 모든 브랜드를 순차 수집합니다"
+                      onClick={() => void handleSync()}
+                    >
+                      <FolderSync size={16} aria-hidden="true" />
+                      {isSyncing && syncingBrandId === null ? "수집 중..." : "전체 브랜드 수집"}
+                    </button>
+                  </div>
+
+                  {syncProgress && syncProgress.instance_id === selectedInstanceId ? (
+                    <SyncProgressPanel progress={syncProgress} onDismiss={() => setSyncProgress(null)} />
+                  ) : null}
+
+                  {isDetailLoading && !isSyncing ? (
+                    <LoadingPanel message="Help Center 구조를 불러오는 중..." />
+                  ) : null}
+
+                  {!isDetailLoading && detail ? (
+                    <>
+                      <p className="muted">
+                        브랜드 {detail.summary.total_brands} · 카테고리 {detail.summary.total_categories} · 섹션{" "}
+                        {detail.summary.total_sections} · 아티클 {detail.summary.total_articles}
+                      </p>
+                      <FetchDataTree
+                        title="Help Center 구조"
+                        brands={detail.brands}
+                        onSyncBrand={(brandId) => void handleSyncBrand(brandId)}
+                        syncingBrandId={syncingBrandId}
+                        syncDisabled={isSyncing}
+                      />
+                    </>
+                  ) : null}
+
+                  {!isDetailLoading && detail && !detail.brands.length ? (
+                    <p className="muted migrate-panel-placeholder">
+                      수집된 데이터가 없습니다. 「전체 브랜드 수집」을 실행하세요.
+                    </p>
+                  ) : null}
+
+                  {!isDetailLoading && !detail ? (
+                    <p className="muted migrate-panel-placeholder">Help Center 구조를 불러오지 못했습니다.</p>
+                  ) : null}
+                </div>
+              )}
             </div>
           ) : (
-            <p className="muted migrate-panel-placeholder">왼쪽에서 인스턴스를 선택하면 Help Center 구조가 표시됩니다.</p>
+            <p className="muted migrate-panel-placeholder">왼쪽에서 인스턴스를 선택하세요.</p>
           )}
         </div>
       </div>
