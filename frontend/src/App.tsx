@@ -18,6 +18,8 @@ import AiOcrMonitorPage from "./pages/AiOcrMonitorPage";
 
 import ConvertImagePage from "./pages/ConvertImagePage";
 
+import ApiRequestPage from "./pages/ApiRequestPage";
+
 import PlaceholderPage from "./pages/PlaceholderPage";
 
 
@@ -74,13 +76,17 @@ export default function App() {
 
         return <AiOcrMonitorPage />;
 
+      case "api-request":
+
+        return <ApiRequestPage instances={instances} />;
+
       case "migrate-file":
 
         return (
 
           <PlaceholderPage
 
-            title="파일로 아티클 이관"
+            title="파일로 이관"
 
             description="CSV·JSON 등 파일을 업로드해 Zendesk 아티클로 일괄 등록합니다."
 

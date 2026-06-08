@@ -420,6 +420,71 @@ export interface DeleteExecuteResponse {
   failed_items: DeleteFailedItem[];
 }
 
+export interface ZendeskApiOperation {
+  id: string;
+  category: string;
+  group: string;
+  label: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path_template: string;
+  path_params: string[];
+  doc_url: string;
+  sample_body?: Record<string, unknown> | null;
+  default_query?: Record<string, string> | null;
+}
+
+export interface ZendeskApiGroup {
+  id: string;
+  label: string;
+  operations: ZendeskApiOperation[];
+}
+
+export interface ZendeskApiCategory {
+  id: string;
+  label: string;
+  groups: ZendeskApiGroup[];
+}
+
+export interface ZendeskApiProduct {
+  id: string;
+  label: string;
+  doc_url: string;
+  categories: ZendeskApiCategory[];
+}
+
+export interface ZendeskApiCatalog {
+  products: ZendeskApiProduct[];
+}
+
+/** @deprecated ZendeskApiOperation 사용 */
+export type ZendeskTicketingApiOperation = ZendeskApiOperation;
+/** @deprecated ZendeskApiGroup 사용 */
+export type ZendeskTicketingApiGroup = ZendeskApiGroup;
+/** @deprecated ZendeskApiCategory 사용 */
+export type ZendeskTicketingApiCategory = ZendeskApiCategory;
+/** @deprecated ZendeskApiCatalog 사용 */
+export type ZendeskTicketingApiCatalog = ZendeskApiCatalog;
+
+export interface ZendeskProxyRequest {
+  instance_id: number;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  json_body?: Record<string, unknown> | null;
+  raw_body?: string | null;
+  query_params?: Record<string, string> | null;
+  request_headers?: Record<string, string> | null;
+}
+
+export interface ZendeskProxyResponse {
+  success: boolean;
+  http_status: number;
+  latency_ms: number;
+  request_url: string;
+  response_body: unknown;
+  response_headers: Record<string, string>;
+  error_message: string | null;
+}
+
 const API_BASE =
   (import.meta as unknown as { env: { VITE_API_BASE_URL?: string } }).env
     ?.VITE_API_BASE_URL ?? "/api";
@@ -813,6 +878,14 @@ export const apiClient = {
     mapping_ids?: number[];
   }) =>
     request<DeleteExecuteResponse>("/delete/retry", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  fetchZendeskApiCatalog: () => request<ZendeskApiCatalog>("/zendesk-proxy/catalog"),
+  /** @deprecated fetchZendeskApiCatalog 사용 */
+  fetchZendeskTicketingApiCatalog: () => request<ZendeskApiCatalog>("/zendesk-proxy/catalog"),
+  zendeskProxyRequest: (payload: ZendeskProxyRequest) =>
+    request<ZendeskProxyResponse>("/zendesk-proxy/request", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
