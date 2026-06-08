@@ -8,8 +8,9 @@ from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.ext.asyncio import create_async_engine
 
+from db.connection import prepare_asyncpg_database
 from db.models import Base
 
 # Alembic 실행 시에도 backend/.env 값을 명시적으로 로드한다.
@@ -22,9 +23,15 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-database_url = os.getenv("DATABASE_URL")
-if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+_raw_database_url = os.getenv("DATABASE_URL")
+_database_url = _raw_database_url
+_connect_args: dict[str, object] = {
+    "prepared_statement_cache_size": 0,
+    "statement_cache_size": 0,
+}
+if _raw_database_url:
+    _database_url, _connect_args = prepare_asyncpg_database(_raw_database_url)
+    config.set_main_option("sqlalchemy.url", _database_url)
 
 
 def run_migrations_offline() -> None:
@@ -68,10 +75,10 @@ def run_migrations_online() -> None:
      * @returns {None} 반환값 없음
      */
     """
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    connectable = create_async_engine(
+        config.get_main_option("sqlalchemy.url"),
         poolclass=pool.NullPool,
+        connect_args=_connect_args,
     )
 
     async def run_async_migrations() -> None:

@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
+from db.connection import prepare_asyncpg_database
+
 
 class Base(DeclarativeBase):
     """SQLAlchemy 선언형 베이스 클래스."""
@@ -16,10 +18,11 @@ class Base(DeclarativeBase):
 # 애플리케이션 시작 시 backend/.env 값을 우선 로드한다.
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-DATABASE_URL = os.getenv(
+_raw_database_url = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://user:password@localhost:5432/zd_article_migrator",
 )
+DATABASE_URL, _connect_args = prepare_asyncpg_database(_raw_database_url)
 
 # Neon PostgreSQL: 연결 유효성 검사 + 주기적 풀 교체.
 # asyncpg/SQLAlchemy prepared statement 캐시를 모두 끄면,
@@ -29,10 +32,7 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_recycle=300,
     echo=False,
-    connect_args={
-        "prepared_statement_cache_size": 0,
-        "statement_cache_size": 0,
-    },
+    connect_args=_connect_args,
 )
 
 
