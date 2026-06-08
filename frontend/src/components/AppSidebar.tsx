@@ -6,6 +6,7 @@ import {
   MessageSquareText,
   FileUp,
   Layers3,
+  PlugZap,
   RefreshCw,
   ScanText,
   Server,
@@ -17,6 +18,7 @@ export type AppRouteKey =
   | "ai-settings"
   | "ai-prompts"
   | "ai-ocr-monitor"
+  | "api-request"
   | "migrate-file"
   | "migrate-instance"
   | "create-image"
@@ -41,27 +43,31 @@ interface AppSidebarProps {
 /** 사이드바 대·소메뉴 구조 */
 const NAV_GROUPS: NavGroup[] = [
   {
-    label: "관리",
+    label: "연결 · 설정",
     items: [
-      { id: "instances", label: "인스턴스 관리", icon: Server },
-      { id: "ai-settings", label: "AI 설정", icon: Bot },
-      { id: "ai-prompts", label: "프롬프트 관리", icon: MessageSquareText },
+      { id: "instances", label: "Zendesk 인스턴스", icon: Server },
+      { id: "ai-settings", label: "AI 연동", icon: Bot },
+      { id: "ai-prompts", label: "OCR 프롬프트", icon: MessageSquareText },
+    ],
+  },
+  {
+    label: "Help Center 이관",
+    items: [
+      { id: "migrate-instance", label: "인스턴스 간 이관", icon: ArrowLeftRight },
+      { id: "migrate-file", label: "파일로 이관", icon: FileUp },
+    ],
+  },
+  {
+    label: "AI 아티클",
+    items: [
+      { id: "create-image", label: "이미지 → 아티클 생성", icon: ScanText },
+      { id: "convert-image", label: "이미지 아티클 변환", icon: RefreshCw },
       { id: "ai-ocr-monitor", label: "AI 호출 이력", icon: BarChart2 },
     ],
   },
   {
-    label: "아티클 마이그레이션",
-    items: [
-      { id: "migrate-file", label: "파일로 아티클 이관", icon: FileUp },
-      { id: "migrate-instance", label: "인스턴스 간 이관", icon: ArrowLeftRight },
-    ],
-  },
-  {
-    label: "아티클 생성",
-    items: [
-      { id: "create-image", label: "이미지로 아티클 생성", icon: ScanText },
-      { id: "convert-image", label: "이미지 아티클 변환", icon: RefreshCw },
-    ],
+    label: "개발자 도구",
+    items: [{ id: "api-request", label: "Zendesk API 요청", icon: PlugZap }],
   },
 ];
 
@@ -125,12 +131,13 @@ export default function AppSidebar({ activeRoute, onNavigate }: AppSidebarProps)
 
 /** 라우트별 페이지 제목(콘텐츠 영역 헤더용) */
 export const ROUTE_TITLES: Record<AppRouteKey, string> = {
-  instances: "인스턴스 관리",
-  "ai-settings": "AI 설정",
-  "ai-prompts": "프롬프트 관리",
+  instances: "Zendesk 인스턴스",
+  "ai-settings": "AI 연동",
+  "ai-prompts": "OCR 프롬프트",
   "ai-ocr-monitor": "AI 호출 이력",
-  "migrate-file": "파일로 아티클 이관",
+  "api-request": "Zendesk API 요청",
+  "migrate-file": "파일로 이관",
   "migrate-instance": "인스턴스 간 이관",
-  "create-image": "이미지로 아티클 생성",
+  "create-image": "이미지 → 아티클 생성",
   "convert-image": "이미지 아티클 변환",
 };

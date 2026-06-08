@@ -220,11 +220,11 @@ export default function AiPromptManagePage() {
       <header className="page-top">
         <h2 className="page-title">
           <MessageSquareText size={24} aria-hidden="true" />
-          프롬프트 관리
+          OCR 프롬프트
         </h2>
         <p className="page-lead">
           이미지 OCR·아티클 변환에 쓸 Vision 프롬프트 템플릿을 등록·수정합니다. 이름은 중복해도 되며
-          ID(#번호)로 구분합니다. AI 설정에서 연동마다 사용할 프롬프트를 선택할 수 있습니다.
+          ID(#번호)로 구분합니다. AI 연동에서 연동마다 사용할 프롬프트를 선택할 수 있습니다.
         </p>
       </header>
 

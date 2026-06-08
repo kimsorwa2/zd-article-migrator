@@ -145,11 +145,11 @@ export default function AiSettingsPage() {
       <header className="page-top">
         <h2 className="page-title">
           <Bot size={24} aria-hidden="true" />
-          AI 설정
+          AI 연동
         </h2>
         <p className="page-lead">
           이미지 OCR·아티클 변환에 사용할 AI 연동(API 키·모델)을 관리합니다. 테이블에서 모델·OCR
-          프롬프트를 바로 바꿀 수 있으며, 프롬프트 본문은 「프롬프트 관리」 메뉴에서 편집합니다.
+          프롬프트를 바로 바꿀 수 있으며, 프롬프트 본문은 「OCR 프롬프트」 메뉴에서 편집합니다.
         </p>
       </header>
 

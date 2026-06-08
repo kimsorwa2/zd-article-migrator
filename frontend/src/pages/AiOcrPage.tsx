@@ -314,7 +314,7 @@ export default function AiOcrPage({ instances }: AiOcrPageProps) {
     <section className="page ai-ocr-page">
       <header className="page-top">
         <div className="ai-ocr-title-row">
-          <h2 className="page-title">이미지로 아티클 생성</h2>
+          <h2 className="page-title">이미지 → 아티클 생성</h2>
           <button
             type="button"
             className="icon-button ai-ocr-settings-button"
