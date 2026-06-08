@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import ai_ocr, delete, fetch, image_convert, instances, migrate
+from api.routers import ai_ocr, delete, fetch, image_convert, instances, migrate, zendesk_proxy
 from db.database import dispose_engine_pool
 
 logging.basicConfig(
@@ -76,6 +76,7 @@ app.include_router(migrate.router, prefix="/api")
 app.include_router(delete.router, prefix="/api")
 app.include_router(ai_ocr.router, prefix="/api")
 app.include_router(image_convert.router, prefix="/api")
+app.include_router(zendesk_proxy.router, prefix="/api")
 
 
 @app.get("/api/health")

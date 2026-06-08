@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -1090,3 +1090,80 @@ class ImageConvertAnalyzeResponse(BaseModel):
 
 
 FetchDetailSectionResponse.model_rebuild()
+
+
+class ZendeskApiOperationResponse(BaseModel):
+    """Zendesk API 카탈로그 operation 한 건."""
+
+    id: str
+    category: str
+    group: str
+    label: str
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+    path_template: str
+    path_params: list[str] = Field(default_factory=list)
+    doc_url: str
+    sample_body: dict[str, Any] | None = None
+    default_query: dict[str, str] | None = None
+
+
+class ZendeskApiGroupResponse(BaseModel):
+    """Zendesk API 카탈로그 중분류."""
+
+    id: str
+    label: str
+    operations: list[ZendeskApiOperationResponse] = Field(default_factory=list)
+
+
+class ZendeskApiCategoryResponse(BaseModel):
+    """Zendesk API 카탈로그 대분류."""
+
+    id: str
+    label: str
+    groups: list[ZendeskApiGroupResponse] = Field(default_factory=list)
+
+
+class ZendeskApiProductResponse(BaseModel):
+    """Zendesk API capability 영역."""
+
+    id: str
+    label: str
+    doc_url: str
+    categories: list[ZendeskApiCategoryResponse] = Field(default_factory=list)
+
+
+class ZendeskApiCatalogResponse(BaseModel):
+    """GET /zendesk-proxy/catalog 응답."""
+
+    products: list[ZendeskApiProductResponse] = Field(default_factory=list)
+
+
+# 하위 호환 alias
+ZendeskTicketingApiOperationResponse = ZendeskApiOperationResponse
+ZendeskTicketingApiGroupResponse = ZendeskApiGroupResponse
+ZendeskTicketingApiCategoryResponse = ZendeskApiCategoryResponse
+ZendeskTicketingApiCatalogResponse = ZendeskApiCatalogResponse
+
+
+class ZendeskProxyRequest(BaseModel):
+    """Zendesk API 프록시 요청."""
+
+    instance_id: int
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+    path: str = Field(min_length=1, max_length=500)
+    json_body: dict[str, Any] | None = None
+    raw_body: str | None = None
+    query_params: dict[str, str] | None = None
+    request_headers: dict[str, str] | None = None
+
+
+class ZendeskProxyResponse(BaseModel):
+    """Zendesk API 프록시 응답."""
+
+    success: bool
+    http_status: int
+    latency_ms: int
+    request_url: str
+    response_body: Any = None
+    response_headers: dict[str, str] = Field(default_factory=dict)
+    error_message: str | None = None
